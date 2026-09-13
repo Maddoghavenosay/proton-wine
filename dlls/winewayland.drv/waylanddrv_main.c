@@ -138,8 +138,10 @@ static void pin_icd_library(const char *json)
  * Which Vulkan driver the game renders on is the app's call, through the environment:
  *   BANNER_WAYLAND_VK_ICD=<absolute path>   the ICD manifest of a driver the app manages (an
  *                                           imported one); taken when it is readable.
- *   BANNER_WAYLAND_VK_VARIANT=a7xx|a8xx     one of the bundled Turnip variants
- *                                           (share/vulkan/icd.d/banner_wayland_turnip_<v>.json).
+ *   BANNER_WAYLAND_VK_VARIANT=a7xx|a8xx|a8xx-perf
+ *                                           one of the bundled Turnip variants
+ *                                           (share/vulkan/icd.d/banner_wayland_turnip_<v>.json,
+ *                                           a8xx-perf -> _a8xx_perf).
  *   neither                                 the plain bundled Turnip (banner_wayland_turnip.json).
  * A value that cannot be honoured is reported (ERR) and falls through to the next line. Every
  * outcome is logged as "winewayland: Vulkan driver <manifest>", the app greps for that. */
@@ -175,9 +177,12 @@ static void use_bundled_drivers(void)
     }
     if (!icd[0] && (env = getenv("BANNER_WAYLAND_VK_VARIANT")) && *env)
     {
-        if (!strcmp(env, "a7xx") || !strcmp(env, "a8xx"))
+        const char *suffix = !strcmp(env, "a7xx") ? "_a7xx" :
+                             !strcmp(env, "a8xx") ? "_a8xx" :
+                             !strcmp(env, "a8xx-perf") ? "_a8xx_perf" : NULL;
+        if (suffix)
         {
-            snprintf(path, sizeof(path), "%s%s_%s.json", wine, icd_base, env);
+            snprintf(path, sizeof(path), "%s%s%s.json", wine, icd_base, suffix);
             if (!access(path, R_OK)) strcpy(icd, path);
             else ERR("winewayland: bundled Vulkan driver variant %s is missing (%s), using the plain one\n", env, path);
         }

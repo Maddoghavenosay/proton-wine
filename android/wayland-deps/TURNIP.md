@@ -1,31 +1,47 @@
 # Wayland Turnip
 
-Three drivers, all OUR build: `libvulkan_freedreno.so` from the Banners-Turnip `wayland` branch
-(`build_wayland.sh`, workflow "Build Wayland variant"), Mesa 26.3.0-devel at `7cda7850`, NDK r29,
-API 29: Turnip with the KGSL backend and the Wayland WSI, built Linux-style on bionic like Termux's.
-The containers' own Vulkan drivers (the wrapper, adrenotools builds) have no Wayland WSI, so
-winewayland points `VK_ICD_FILENAMES` at one of these when it runs on the Bannerlator compositor.
+Four drivers, all OUR build: `libvulkan_freedreno.so` from the Banners-Turnip `wayland` branch
+(`build_wayland.sh`, workflow "Build Wayland variant"), NDK r29, API 29: Turnip with the KGSL
+backend and the Wayland WSI, built Linux-style on bionic like Termux's. The containers' own Vulkan
+drivers (the wrapper, adrenotools builds) have no Wayland WSI, so winewayland points
+`VK_ICD_FILENAMES` at one of these when it runs on the Bannerlator compositor.
 `usr/lib/libdrm.so` (Termux 2.4.134) is what they were linked against and is bundled next to them.
 
 ## Variants
 
-One Mesa tree, one set of flags; the variants are the Android release matrix's per-GPU patches
-(`turnip_build_combined_test.yml`), applied the way `build_turnip.sh` applies them, on top of the
-shared Wayland patches. The build refuses a variant whose patch does not apply or that leaves
-`freedreno_devices.py` unchanged, checks that the three share one SONAME and NEEDED set, and that
-the GPU names really are in the binary (`FD710` only in a7xx, `Adreno (TM) 825` only in a8xx).
+Each driver is its own Mesa checkout: the plain one is the Banners-Turnip release commit, the
+others are pinned to the commit the community release they reproduce was built from (the recipe
+files are vendored verbatim under Banners-Turnip `patches/upstream/<release>/`, with a `SOURCE.md`
+recording tag, commit and how the Mesa pin was established). All four get the same flags and the
+same Wayland changes first (`-Dfreedreno-kmds=msm,kgsl` + libdrm, `no_pthread_cancel.py`, the KGSL
+timestamp assert turned into a warning, Android detection off), then the recipe on top. The build
+refuses a recipe script that reports a missing anchor or leaves the tree unchanged, checks that
+the four share one SONAME and NEEDED set, that `FD710` is only in a7xx, `Adreno (TM) 825` only in
+the two a8xx builds, the PWR_MAX log string only in a8xx_perf, and that the two a8xx builds differ.
 
-| variant | `usr/lib/` | ICD manifest (`usr/share/vulkan/icd.d/`) | patches on top of the shared tree | Adreno |
-| --- | --- | --- | --- | --- |
-| plain | `libvulkan_freedreno_wayland.so` | `banner_wayland_turnip.json` | none | 6xx, 730/740/750 (upstream also lists 722) |
-| a7xx | `libvulkan_freedreno_wayland_a7xx.so` | `banner_wayland_turnip_a7xx.json` | `patches/a710-720.py`: FD710/FD720/FD722 entries with per-GPU magic regs (replaces upstream's 722) | 710/720/722 |
-| a8xx | `libvulkan_freedreno_wayland_a8xx.so` | `banner_wayland_turnip_a8xx.json` | `patches/tu8_kgsl_26.patch` (u_gralloc UBWC hack + drm-shim ids; neither file is compiled in this build) + `fix_a8xx_dev_info.py` (`disable_gmem` dev-info property) + `apply_a8xx_gpus.py` (A825 entry, A810 KGSL chip id + `disable_gmem`, extra A829 ids) | 830/840 (8 Elite: also 810/825/829) |
+| variant | `usr/lib/` | ICD manifest (`usr/share/vulkan/icd.d/`) | recipe | Mesa | Adreno |
+| --- | --- | --- | --- | --- | --- |
+| plain | `libvulkan_freedreno_wayland.so` | `banner_wayland_turnip.json` | none (also provides EGL + Zink) | `7cda7850edd103ace21aac37d416d2fdf7a282e1` (26.3.0-devel, 2026-09-11) | 6xx, 730/740/750 (upstream also lists 722) |
+| a7xx | `libvulkan_freedreno_wayland_a7xx.so` | `banner_wayland_turnip_a7xx.json` | Vauzi-17/710 release 3.6 (tag commit `5db89bde`): `add_710_720_722.py`, FD710/FD720/FD722 entries with per-GPU magic regs, `num_ccu` 1/2/2 (replaces upstream's 722) | `7631b5254f1a0a4371f5594e630ce2f2b8394e73` (26.3.0-devel, 2026-08-27 05:57Z) | 710/720/722 |
+| a8xx | `libvulkan_freedreno_wayland_a8xx.so` | `banner_wayland_turnip_a8xx.json` | WinNative-Emu/Drivers v1.15 (WN-Turnip 1.15, tag commit `8407c801`): `fix_gralloc_flushall`, `fix_a8xx_dev_info` (A810/A829 `disable_gmem`, the check really lands here), `apply_a8xx_gpus` (A825 entry, A810 speedbin id, A829 KGSL ids), `apply_a7xx_gen1_quirks`, `apply_a7xx_gen2_ubwc_hint`, `add_aimapper_gralloc`, `add_ubwc_swapchain_usage`, then `apply_balance_variant` (**Balanced**: GMEM autotuner bandwidth multiplier 11 -> 10) | `12b7b819edb4ddd3580e7e5ffe384610ae726c90` (26.3.0-devel, 2026-09-10, from their release notes) | 830/840 (8 Elite: also 810/825/829); the a7xx_gen1/gen2 quirks also touch 720/725/730/740/X1-85 on this driver |
+| a8xx-perf | `libvulkan_freedreno_wayland_a8xx_perf.so` | `banner_wayland_turnip_a8xx_perf.json` | the same set, then `apply_perf_variant` with `BUILD_VARIANT=p` (**Performance**: `KGSL_CONTEXT_PWR_CONSTRAINT` + `KGSL_PROP_PWR_CONSTRAINT = PWR_MAX` at queue creation, re-asserted every 1000 submissions, `KGSL_CMDBATCH_PWR_CONSTRAINT` on submits; higher clocks, higher power draw) | same as a8xx | same as a8xx |
 
-Known limit of the a8xx recipe, same as on the Android matrix: `fix_a8xx_dev_info.py` looks for the
-literal `disable_gmem` in `tu_cmd_buffer.cc`, upstream already has an unrelated
-`cmd->state.rp.disable_gmem`, so the script believes its check is present and never inserts the
-`dev_info.props.disable_gmem` read. A810's `disable_gmem = True` is therefore inert; the other
-a8xx changes are real.
+Notes:
+- The Vauzi 3.6 release names no Mesa commit; its binary embeds `git-25219437df`, a commit that is
+  public nowhere (a local commit on top of main), so the pin is the newest mesa/mesa `main` commit
+  before the zip's build time (2026-08-27 07:01 builder-local, read as UTC). If that clock was
+  UTC+7 the head would have been `d45779b3` (2026-08-26); nothing in Turnip changed in between.
+- Their README recommends **`TU_DEBUG=sysmem`** on 710/720/722 for stability (GMEM is more prone to
+  rendering artifacts there). It is NOT baked into the driver: set it in the container's
+  environment for a7xx users.
+- WinNative's Android-side scripts (gralloc `gmsm` bypass, the AIMapper gralloc backend, the UBWC
+  swapchain usage bit) are applied as their build applies them; the files they change are either
+  not compiled in a Wayland build (u_gralloc, vk_android.c) or inert without Android's loader (the
+  `ahb_vendor_usage_compressed` field). Their Android build's NDK `sed` fixes and the
+  `-Werror=gnu-empty-initializer` strip are build-environment steps, not part of the driver, and are
+  not done.
+- Sizes: the artifact ships the drivers unstripped; the wcp's own strip step strips every
+  `lib/*.so`, so inside the wcp they are ~14 MB each.
 
 ## How winewayland picks one (`dlls/winewayland.drv/waylanddrv_main.c`, `use_bundled_drivers`)
 
@@ -35,9 +51,11 @@ Evaluated once per process on the Bannerlator compositor, first match wins:
    imported one). Taken if it is readable; logged at ERR level as
    `winewayland: Vulkan driver <path> (app-selected)`. Not absolute / not readable: ERR, fall
    through.
-2. `BANNER_WAYLAND_VK_VARIANT=a7xx` or `a8xx` — the bundled manifest above. If that file is
-   missing from the wcp: ERR ("… is missing (path), using the plain one"), fall through. Any other
-   value: ERR ("unknown BANNER_WAYLAND_VK_VARIANT=…"), fall through (`plain` is accepted silently).
+2. `BANNER_WAYLAND_VK_VARIANT=a7xx`, `a8xx` or `a8xx-perf` — the bundled manifest above
+   (`a8xx-perf` maps to `banner_wayland_turnip_a8xx_perf.json`; `a8xx` is the Balanced one, the
+   default an "Auto" choice should make on 8xx). If that file is missing from the wcp: ERR ("… is
+   missing (path), using the plain one"), fall through. Any other value: ERR ("unknown
+   BANNER_WAYLAND_VK_VARIANT=…"), fall through (`plain` is accepted silently).
 3. The plain bundled manifest — today's behaviour.
 
 The chosen manifest becomes `VK_ICD_FILENAMES` and is logged as
@@ -71,8 +89,8 @@ Termux's other patches were checked: 0000/0002/0018 are applied inline; 0008/001
 # OpenGL (EGL + Zink)
 
 `usr/lib/libEGL.so.1`, `libGLESv2.so.2` and `libgallium-26.3.0-devel.so` are Mesa 26.3.0-devel at
-7cda7850edd103ace21aac37d416d2fdf7a282e1 (the Banners-Turnip release commit), built by the
-Banners-Turnip `wayland` branch (`build_wayland.sh`): EGL on the Wayland platform with Zink, no LLVM,
+7cda7850edd103ace21aac37d416d2fdf7a282e1 (the Banners-Turnip release commit), from the same
+`build_wayland.sh` run and tree as the plain Turnip: EGL on the Wayland platform with Zink, no LLVM,
 no GLX, as a Linux-style build on bionic like Termux's Mesa, with EGL patched to take its kopper (Zink)
 path for a Wayland display without a DRM device. winewayland points Mesa at Zink
 (`MESA_LOADER_DRIVER_OVERRIDE=zink`, `WINE_USE_EGL=1`; NOT `LIBGL_ALWAYS_SOFTWARE`, which makes
