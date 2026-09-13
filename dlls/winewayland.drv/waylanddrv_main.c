@@ -26,6 +26,7 @@
 
 #include <dlfcn.h>
 #include <limits.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
@@ -36,6 +37,8 @@
 #include "waylanddrv.h"
 
 #include "wine/debug.h"
+
+WINE_DEFAULT_DEBUG_CHANNEL(waylanddrv);
 
 char *process_name = NULL;
 
@@ -94,20 +97,64 @@ static void wayland_init_process_name(void)
     }
 }
 
+/* Keep a Vulkan driver resident for the life of the process. The Vulkan loader unloads the
+ * driver when a program destroys its last instance, and a later call still reaching into it
+ * then jumps into unmapped code (DiRT Rally 2.0 probes a device, releases it, and spins on
+ * that fault). The library is the manifest's library_path, relative to the manifest's dir.
+ * Keeping the driver resident leaves its globals alive across a winevulkan unload, so
+ * winevulkan pins itself too on a Wayland desktop and the two stay in step
+ * (see dlls/winevulkan/loader.c). */
+static void pin_icd_library(const char *json)
+{
+    char lib[PATH_MAX], buf[4096], *p, *q;
+    const char *slash;
+    size_t n, dir;
+    FILE *f;
+
+    if (!(f = fopen(json, "r"))) return;
+    n = fread(buf, 1, sizeof(buf) - 1, f);
+    fclose(f);
+    buf[n] = 0;
+    if (!(p = strstr(buf, "\"library_path\"")) || !(p = strchr(p + 14, ':')) ||
+        !(p = strchr(p, '"')) || !(q = strchr(++p, '"')))
+    {
+        MESSAGE("winewayland: no library_path in %s, driver not pinned\n", json);
+        return;
+    }
+    *q = 0;
+    slash = p[0] == '/' ? NULL : strrchr(json, '/');
+    dir = slash ? slash - json + 1 : 0;
+    if (dir + strlen(p) >= sizeof(lib)) return;
+    memcpy(lib, json, dir);
+    strcpy(lib + dir, p);
+    if (!dlopen(lib, RTLD_NOW | RTLD_NODELETE))
+        MESSAGE("winewayland: could not pin %s: %s\n", lib, dlerror());
+}
+
 /* Containers on the Bannerlator compositor point VK_ICD_FILENAMES at a wrapper driver that
- * can only present to X11, and their OpenGL is GLX-only. This build ships a Wayland-capable
- * Turnip and Mesa's EGL + Zink next to Wine, so use those when we're on that compositor. */
+ * can only present to X11, and their OpenGL is GLX-only. This build ships Wayland-capable
+ * Turnips and Mesa's EGL + Zink next to Wine, so use those when we're on that compositor.
+ *
+ * Which Vulkan driver the game renders on is the app's call, through the environment:
+ *   BANNER_WAYLAND_VK_ICD=<absolute path>   the ICD manifest of a driver the app manages (an
+ *                                           imported one); taken when it is readable.
+ *   BANNER_WAYLAND_VK_VARIANT=a7xx|a8xx     one of the bundled Turnip variants
+ *                                           (share/vulkan/icd.d/banner_wayland_turnip_<v>.json).
+ *   neither                                 the plain bundled Turnip (banner_wayland_turnip.json).
+ * A value that cannot be honoured is reported (ERR) and falls through to the next line. Every
+ * outcome is logged as "winewayland: Vulkan driver <manifest>", the app greps for that. */
 static void use_bundled_drivers(void)
 {
-    static const char json[] = "/share/vulkan/icd.d/banner_wayland_turnip.json";
+    static const char icd_base[] = "/share/vulkan/icd.d/banner_wayland_turnip";
     static const char egl[] = "/lib/libEGL.so.1";
-    char wine[PATH_MAX], path[PATH_MAX], *p;
+    char wine[PATH_MAX], path[PATH_MAX], icd[PATH_MAX], *p;
     const char *env;
+    BOOL app_selected = FALSE;
     Dl_info info;
     int i;
 
     if (!dladdr((void *)use_bundled_drivers, &info) || !info.dli_fname) return;
-    if (strlen(info.dli_fname) >= sizeof(wine) - sizeof(json)) return;
+    if (strlen(info.dli_fname) >= sizeof(wine) - sizeof(icd_base) - 16) return;
     strcpy(wine, info.dli_fname);
     /* <wine>/lib/wine/aarch64-unix/winewayland.so -> <wine> */
     for (i = 0; i < 4; i++)
@@ -116,24 +163,39 @@ static void use_bundled_drivers(void)
         *p = 0;
     }
 
-    strcpy(path, wine);
-    strcat(path, json);
-    if (!access(path, R_OK))
+    icd[0] = 0;
+    if ((env = getenv("BANNER_WAYLAND_VK_ICD")) && *env)
     {
-        setenv("VK_ICD_FILENAMES", path, 1);
-        MESSAGE("winewayland: Vulkan driver %s\n", path);
+        if (env[0] == '/' && strlen(env) < sizeof(icd) && !access(env, R_OK))
+        {
+            strcpy(icd, env);
+            app_selected = TRUE;
+        }
+        else ERR("winewayland: BANNER_WAYLAND_VK_ICD=%s is not a readable absolute path, ignoring it\n", env);
+    }
+    if (!icd[0] && (env = getenv("BANNER_WAYLAND_VK_VARIANT")) && *env)
+    {
+        if (!strcmp(env, "a7xx") || !strcmp(env, "a8xx"))
+        {
+            snprintf(path, sizeof(path), "%s%s_%s.json", wine, icd_base, env);
+            if (!access(path, R_OK)) strcpy(icd, path);
+            else ERR("winewayland: bundled Vulkan driver variant %s is missing (%s), using the plain one\n", env, path);
+        }
+        else if (strcmp(env, "plain"))
+            ERR("winewayland: unknown BANNER_WAYLAND_VK_VARIANT=%s, using the plain driver\n", env);
+    }
+    if (!icd[0])
+    {
+        snprintf(path, sizeof(path), "%s%s.json", wine, icd_base);
+        if (!access(path, R_OK)) strcpy(icd, path);
+    }
 
-        /* The Vulkan loader unloads the driver when a program destroys its last instance,
-         * and a later call still reaching into it then jumps into unmapped code (DiRT Rally
-         * 2.0 probes a device, releases it, and spins on that fault). Keep the library
-         * resident for the life of the process. */
-        strcpy(path, wine);
-        strcat(path, "/lib/libvulkan_freedreno_wayland.so");
-        if (!dlopen(path, RTLD_NOW | RTLD_NODELETE))
-            MESSAGE("winewayland: could not pin %s: %s\n", path, dlerror());
-        /* Keeping the driver resident leaves its globals alive across a winevulkan unload, so
-         * winevulkan pins itself too when we are the active driver and the two stay in step
-         * (see dlls/winevulkan/loader.c). */
+    if (icd[0])
+    {
+        setenv("VK_ICD_FILENAMES", icd, 1);
+        if (app_selected) ERR("winewayland: Vulkan driver %s (app-selected)\n", icd);
+        else MESSAGE("winewayland: Vulkan driver %s\n", icd);
+        pin_icd_library(icd);
     }
 
     /* OpenGL through EGL on Zink. On by default: with our own Wayland Turnip it renders and stays

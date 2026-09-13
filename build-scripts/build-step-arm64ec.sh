@@ -379,13 +379,21 @@ do
       # one, but ship the copy it was built against so the ICD never depends on that.
       [ -f "$_WLD"/libdrm.so ] && cp -n "$_WLD"/libdrm.so "$OUTPUT_DIR/lib/" 2>/dev/null || true
       echo "Bundled wayland/xkb runtime libs into wcp lib/"
-      # Wayland-capable Turnip (our Banners-Turnip `wayland` build, see android/wayland-deps/TURNIP.md)
-      # + its ICD manifest, which winewayland selects when running on the Bannerlator compositor.
+      # Wayland-capable Turnips (our Banners-Turnip `wayland` build, see android/wayland-deps/TURNIP.md):
+      # the plain driver plus the Adreno 7xx (710/720/722) and 8xx variants, each with its ICD
+      # manifest. winewayland picks one on the Bannerlator compositor (BANNER_WAYLAND_VK_VARIANT /
+      # BANNER_WAYLAND_VK_ICD); lib/libvulkan_freedreno_wayland.so is what the app checks for.
+      # All three ship or the build fails: a wcp missing a variant would silently render 710/720
+      # or 8xx devices on the plain driver, which cannot create a device there.
       if [ -f "$_WLD"/libvulkan_freedreno_wayland.so ]; then
-        cp "$_WLD"/libvulkan_freedreno_wayland.so "$OUTPUT_DIR/lib/"
         mkdir -p "$OUTPUT_DIR/share/vulkan/icd.d"
-        cp "$_WLD"/../share/vulkan/icd.d/banner_wayland_turnip.json "$OUTPUT_DIR/share/vulkan/icd.d/"
-        echo "Bundled the Wayland Turnip ICD into wcp"
+        for v in "" _a7xx _a8xx; do
+          [ -f "$_WLD/libvulkan_freedreno_wayland$v.so" ] && [ -f "$_WLD/../share/vulkan/icd.d/banner_wayland_turnip$v.json" ] \
+            || { echo "ERROR: Wayland Turnip variant '$v' (libvulkan_freedreno_wayland$v.so + banner_wayland_turnip$v.json) missing from android/wayland-deps" >&2; exit 1; }
+          cp "$_WLD/libvulkan_freedreno_wayland$v.so" "$OUTPUT_DIR/lib/"
+          cp "$_WLD/../share/vulkan/icd.d/banner_wayland_turnip$v.json" "$OUTPUT_DIR/share/vulkan/icd.d/"
+        done
+        echo "Bundled the Wayland Turnip ICDs (plain, a7xx, a8xx) into wcp"
       fi
       # Mesa's EGL (Wayland platform) + Zink for OpenGL, from the same build as that Turnip,
       # with the libwayland-server its EGL links.
