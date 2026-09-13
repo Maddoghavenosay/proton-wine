@@ -1,8 +1,12 @@
-name: Build Proton Wine (GE 11.5)
+name: GE-Proton 11.0-5 (bionic layer)
+run-name: "GE-Proton 11.0-5 — ${{ github.ref_name }} (${{ github.event_name }})"
 
+# This file is named per layer on purpose: GitHub labels a run with the workflow name
+# from the DEFAULT branch's copy of the same path, so a shared build-proton.yml made
+# every layer's run read "11.0-1". A distinct path per branch shows the real name.
 on:
   push:
-    branches: [ main, master, proton_11.0, proton_11.5-GE , 'aio-eanet/**' ]
+    branches: [ main, master, proton_11.0, proton_11.5-GE, 'staging/proton_11.5-GE/**' ]
   pull_request:
     branches: [ main, master, proton_11.0 ]
   workflow_dispatch:
