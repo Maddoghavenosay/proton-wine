@@ -172,13 +172,39 @@ jobs:
             bash build-scripts/build-step-arm64ec.sh $PAGES_FLAG --install
           fi
       
-      - name: Download prefixPack.txz for ${{ matrix.arch }}
+      # Binary verification of the installed tree BEFORE packaging: refuses a layer that
+      # compiled fine but lost a feature (patch dropped, #ifdef'd out, wrong API level,
+      # wrong page alignment, skeleton tree from a failed make). See verify-layer.py.
+      - name: Verify layer binaries for ${{ matrix.arch }} (sdk${{ matrix.api_level }})
         run: |
           if [ "${{ matrix.arch }}" == "x86_64" ]; then
-            wget https://github.com/GameNative/bionic-prefix-files/raw/main/prefixPack-x86_64-11.txz -O $GITHUB_WORKSPACE/prefixPack.txz
+            OUTPUT_DIR="$HOME/compiled-files-x86_64"
           else
-            wget https://github.com/GameNative/bionic-prefix-files/raw/main/prefixPack-arm64ec-11.txz -O $GITHUB_WORKSPACE/prefixPack.txz
+            OUTPUT_DIR="$HOME/compiled-files-aarch64"
           fi
+          # arm64ec is always a 16 KB-aligned android28 build; x86_64 flips to android35 + 16 KB
+          # only on the api_level 35 leg (mirrors PAGES_FLAG / TARGET in the build-step scripts).
+          PAGES=4k; API=28
+          { [ "${{ matrix.arch }}" = "aarch64" ] || [ "${{ matrix.api_level }}" = "35" ]; } && PAGES=16k
+          { [ "${{ matrix.arch }}" = "x86_64" ] && [ "${{ matrix.api_level }}" = "35" ]; } && API=35
+          GE=""; [ -d android/ge-patches/game-fixes ] && GE="--ge"
+          python3 build-scripts/verify-layer.py "$OUTPUT_DIR" --arch ${{ matrix.arch }} --api $API --pages $PAGES $GE
+
+      - name: Download prefixPack.txz for ${{ matrix.arch }}
+        run: |
+          # Pinned to GameNative/bionic-prefix-files @ 6286ac45 (2026-05-07, the files every
+          # shipped layer was built with) and sha256-checked: a push to their `main` must never
+          # change what our layer ships, and a truncated download must never be packaged.
+          PIN=6286ac456e4a8376e053ce1ce4f565bd37cc4af4
+          if [ "${{ matrix.arch }}" == "x86_64" ]; then
+            NAME=prefixPack-x86_64-11.txz
+            SHA=d8d1d8af905af40ae7f37114de1cf87575f88827fd8e2780cd2f92d7852a8ed0
+          else
+            NAME=prefixPack-arm64ec-11.txz
+            SHA=ade99dc80b17086a269c038c9bc50167902103a9a61df763cba4d613543ff12a
+          fi
+          wget --tries=5 --retry-connrefused --waitretry=10 "https://raw.githubusercontent.com/GameNative/bionic-prefix-files/$PIN/$NAME" -O $GITHUB_WORKSPACE/prefixPack.txz
+          echo "$SHA  $GITHUB_WORKSPACE/prefixPack.txz" | sha256sum -c -
       
       - name: Generate profile.json files
         run: |
@@ -245,6 +271,28 @@ jobs:
           tar cJf proton-wine-11.0-2-$ARCH_NAME.wcp.xz bin lib share prefixPack.txz profile.json
           mv proton-wine-11.0-2-$ARCH_NAME.wcp.xz $GITHUB_WORKSPACE/
       
+      # The packaged archive must carry exactly what the app's ContentsManager expects.
+      - name: Verify wcp archives
+        run: |
+          cd $GITHUB_WORKSPACE
+          UNIX="${{ matrix.arch }}-unix"
+          for WCP in *.wcp; do
+            echo "== $WCP ($(stat -c %s "$WCP") bytes)"
+            tar -I zstd -tf "$WCP" > wcp.lst
+            for e in profile.json prefixPack.txz bin/wine "lib/wine/$UNIX/ntdll.so" "lib/wine/$UNIX/win32u.so" share/wine/wine.inf; do
+              grep -qx -- "$e" wcp.lst || { echo "FATAL: $e missing from $WCP"; exit 1; }
+            done
+            tar -I zstd -xf "$WCP" -O profile.json > wcp-profile.json
+            cmp wcp-profile.json profile.json || { echo "FATAL: profile.json inside $WCP differs from the generated one"; exit 1; }
+            python3 -c 'import json,sys; p=json.load(open("wcp-profile.json")); print("   type=%s versionName=%s versionCode=%s" % (p["type"], p["versionName"], p["versionCode"]))'
+            echo "   $(wc -l < wcp.lst) entries; ok"
+          done
+          for WCPXZ in *.wcp.xz; do
+            echo "== $WCPXZ ($(stat -c %s "$WCPXZ") bytes)"
+            tar -tJf "$WCPXZ" | grep -qx profile.json || { echo "FATAL: profile.json missing from $WCPXZ"; exit 1; }
+            echo "   ok"
+          done
+
       - name: Upload build artifacts
         run: |
           if [ "${{ matrix.arch }}" == "x86_64" ]; then
