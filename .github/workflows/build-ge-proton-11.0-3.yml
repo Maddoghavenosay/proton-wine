@@ -180,11 +180,10 @@ jobs:
           else
             OUTPUT_DIR="$HOME/compiled-files-aarch64"
           fi
-          # arm64ec is always a 16 KB-aligned android28 build; x86_64 flips to android35 + 16 KB
-          # only on the api_level 35 leg (mirrors PAGES_FLAG / TARGET in the build-step scripts).
+          # Every leg compiles against the android28 NDK target (true sdk28); the api_level 35
+          # leg only adds 16 KB linker alignment (mirrors PAGES_FLAG in the build-step scripts).
           PAGES=4k; API=28
           { [ "${{ matrix.arch }}" = "aarch64" ] || [ "${{ matrix.api_level }}" = "35" ]; } && PAGES=16k
-          { [ "${{ matrix.arch }}" = "x86_64" ] && [ "${{ matrix.api_level }}" = "35" ]; } && API=35
           GE=""; [ -d android/ge-patches/game-fixes ] && GE="--ge"
           python3 build-scripts/verify-layer.py "$OUTPUT_DIR" --arch ${{ matrix.arch }} --api $API --pages $PAGES $GE
 
