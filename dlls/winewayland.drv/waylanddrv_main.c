@@ -131,6 +131,44 @@ static void pin_icd_library(const char *json)
         MESSAGE("winewayland: could not pin %s: %s\n", lib, dlerror());
 }
 
+/* <wine>/lib/wine/aarch64-unix/winewayland.so -> <wine>, the installed Proton tree that this
+ * build's bundled drivers and data live under. */
+static BOOL bundled_root(char *wine, size_t size)
+{
+    Dl_info info;
+    char *p;
+    int i;
+
+    if (!dladdr((void *)bundled_root, &info) || !info.dli_fname) return FALSE;
+    if (strlen(info.dli_fname) >= size - 96) return FALSE;
+    strcpy(wine, info.dli_fname);
+    for (i = 0; i < 4; i++)
+    {
+        if (!(p = strrchr(wine, '/'))) return FALSE;
+        *p = 0;
+    }
+    return TRUE;
+}
+
+/* The bundled libxkbregistry / libxkbcommon are Termux builds whose compiled-in xkeyboard-config
+ * root is Termux's private directory, unreadable from the app, so parsing the default ruleset
+ * failed in every container and layouts could only be named "us" (wayland_keyboard.c). This
+ * build ships xkeyboard-config's data under share/X11/xkb; point the libraries at it unless the
+ * environment already chose a root. Must run before the compositor hands us a wl_keyboard. */
+static void use_bundled_xkb(void)
+{
+    static const char rules[] = "/rules/evdev.xml";
+    char wine[PATH_MAX], path[PATH_MAX];
+
+    if (getenv("XKB_CONFIG_ROOT")) return;
+    if (!bundled_root(wine, sizeof(wine))) return;
+    snprintf(path, sizeof(path), "%s/share/X11/xkb%s", wine, rules);
+    if (access(path, R_OK)) return;
+    path[strlen(path) - (sizeof(rules) - 1)] = 0;
+    setenv("XKB_CONFIG_ROOT", path, 1);
+    MESSAGE("winewayland: Xkb config root %s\n", path);
+}
+
 /* Containers on the Bannerlator compositor point VK_ICD_FILENAMES at a wrapper driver that
  * can only present to X11, and their OpenGL is GLX-only. This build ships Wayland-capable
  * Turnips and Mesa's EGL + Zink next to Wine, so use those when we're on that compositor.
@@ -138,10 +176,10 @@ static void pin_icd_library(const char *json)
  * Which Vulkan driver the game renders on is the app's call, through the environment:
  *   BANNER_WAYLAND_VK_ICD=<absolute path>   the ICD manifest of a driver the app manages (an
  *                                           imported one); taken when it is readable.
- *   BANNER_WAYLAND_VK_VARIANT=a7xx|a8xx|a8xx-perf
+ *   BANNER_WAYLAND_VK_VARIANT=a7xx|a8xx|a8xx-perf|a8xx-gen8
  *                                           one of the bundled Turnip variants
  *                                           (share/vulkan/icd.d/banner_wayland_turnip_<v>.json,
- *                                           a8xx-perf -> _a8xx_perf).
+ *                                           a8xx-perf -> _a8xx_perf, a8xx-gen8 -> _a8xx_gen8).
  *   neither                                 the plain bundled Turnip (banner_wayland_turnip.json).
  * A value that cannot be honoured is reported (ERR) and falls through to the next line. Every
  * outcome is logged as "winewayland: Vulkan driver <manifest>", the app greps for that. */
@@ -149,21 +187,11 @@ static void use_bundled_drivers(void)
 {
     static const char icd_base[] = "/share/vulkan/icd.d/banner_wayland_turnip";
     static const char egl[] = "/lib/libEGL.so.1";
-    char wine[PATH_MAX], path[PATH_MAX], icd[PATH_MAX], *p;
+    char wine[PATH_MAX], path[PATH_MAX], icd[PATH_MAX];
     const char *env;
     BOOL app_selected = FALSE;
-    Dl_info info;
-    int i;
 
-    if (!dladdr((void *)use_bundled_drivers, &info) || !info.dli_fname) return;
-    if (strlen(info.dli_fname) >= sizeof(wine) - sizeof(icd_base) - 16) return;
-    strcpy(wine, info.dli_fname);
-    /* <wine>/lib/wine/aarch64-unix/winewayland.so -> <wine> */
-    for (i = 0; i < 4; i++)
-    {
-        if (!(p = strrchr(wine, '/'))) return;
-        *p = 0;
-    }
+    if (!bundled_root(wine, sizeof(wine))) return;
 
     icd[0] = 0;
     if ((env = getenv("BANNER_WAYLAND_VK_ICD")) && *env)
@@ -179,7 +207,8 @@ static void use_bundled_drivers(void)
     {
         const char *suffix = !strcmp(env, "a7xx") ? "_a7xx" :
                              !strcmp(env, "a8xx") ? "_a8xx" :
-                             !strcmp(env, "a8xx-perf") ? "_a8xx_perf" : NULL;
+                             !strcmp(env, "a8xx-perf") ? "_a8xx_perf" :
+                             !strcmp(env, "a8xx-gen8") ? "_a8xx_gen8" : NULL;
         if (suffix)
         {
             snprintf(path, sizeof(path), "%s%s%s.json", wine, icd_base, suffix);
@@ -231,6 +260,7 @@ static NTSTATUS waylanddrv_unix_init(void *arg)
     __wine_set_user_driver(&waylanddrv_funcs, WINE_GDI_DRIVER_VERSION);
 
     wayland_init_process_name();
+    use_bundled_xkb();
 
     if (!wayland_process_init()) goto err;
 

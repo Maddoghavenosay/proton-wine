@@ -1,6 +1,6 @@
 # Wayland Turnip
 
-Four drivers, all OUR build: `libvulkan_freedreno.so` from the Banners-Turnip `wayland` branch
+Five drivers, all OUR build: `libvulkan_freedreno.so` from the Banners-Turnip `wayland` branch
 (`build_wayland.sh`, workflow "Build Wayland variant"), NDK r29, API 29: Turnip with the KGSL
 backend and the Wayland WSI, built Linux-style on bionic like Termux's. The containers' own Vulkan
 drivers (the wrapper, adrenotools builds) have no Wayland WSI, so winewayland points
@@ -16,8 +16,9 @@ recording tag, commit and how the Mesa pin was established). All four get the sa
 same Wayland changes first (`-Dfreedreno-kmds=msm,kgsl` + libdrm, `no_pthread_cancel.py`, the KGSL
 timestamp assert turned into a warning, Android detection off), then the recipe on top. The build
 refuses a recipe script that reports a missing anchor or leaves the tree unchanged, checks that
-the four share one SONAME and NEEDED set, that `FD710` is only in a7xx, `Adreno (TM) 825` only in
-the two a8xx builds, the PWR_MAX log string only in a8xx_perf, and that the two a8xx builds differ.
+the five share one SONAME and NEEDED set, that `FD710` is only in a7xx, `Adreno (TM) 825` only in
+the three a8xx builds, the PWR_MAX log string only in a8xx_perf, `deck_emu` only in a8xx_gen8, and
+that the WN a8xx builds differ.
 
 | variant | `usr/lib/` | ICD manifest (`usr/share/vulkan/icd.d/`) | recipe | Mesa | Adreno |
 | --- | --- | --- | --- | --- | --- |
@@ -25,6 +26,7 @@ the two a8xx builds, the PWR_MAX log string only in a8xx_perf, and that the two 
 | a7xx | `libvulkan_freedreno_wayland_a7xx.so` | `banner_wayland_turnip_a7xx.json` | Vauzi-17/710 release 3.6 (tag commit `5db89bde`): `add_710_720_722.py`, FD710/FD720/FD722 entries with per-GPU magic regs, `num_ccu` 1/2/2 (replaces upstream's 722) | `7631b5254f1a0a4371f5594e630ce2f2b8394e73` (26.3.0-devel, 2026-08-27 05:57Z) | 710/720/722 |
 | a8xx | `libvulkan_freedreno_wayland_a8xx.so` | `banner_wayland_turnip_a8xx.json` | WinNative-Emu/Drivers v1.15 (WN-Turnip 1.15, tag commit `8407c801`): `fix_gralloc_flushall`, `fix_a8xx_dev_info` (A810/A829 `disable_gmem`, the check really lands here), `apply_a8xx_gpus` (A825 entry, A810 speedbin id, A829 KGSL ids), `apply_a7xx_gen1_quirks`, `apply_a7xx_gen2_ubwc_hint`, `add_aimapper_gralloc`, `add_ubwc_swapchain_usage`, then `apply_balance_variant` (**Balanced**: GMEM autotuner bandwidth multiplier 11 -> 10) | `12b7b819edb4ddd3580e7e5ffe384610ae726c90` (26.3.0-devel, 2026-09-10, from their release notes) | 830/840 (8 Elite: also 810/825/829); the a7xx_gen1/gen2 quirks also touch 720/725/730/740/X1-85 on this driver |
 | a8xx-perf | `libvulkan_freedreno_wayland_a8xx_perf.so` | `banner_wayland_turnip_a8xx_perf.json` | the same set, then `apply_perf_variant` with `BUILD_VARIANT=p` (**Performance**: `KGSL_CONTEXT_PWR_CONSTRAINT` + `KGSL_PROP_PWR_CONSTRAINT = PWR_MAX` at queue creation, re-asserted every 1000 submissions, `KGSL_CMDBATCH_PWR_CONSTRAINT` on submits; higher clocks, higher power draw) | same as a8xx | same as a8xx |
+| a8xx-gen8 | `libvulkan_freedreno_wayland_a8xx_gen8.so` | `banner_wayland_turnip_a8xx_gen8.json` | Banners-Turnip's own Android a8xx recipe (`turnip_build_combined.yml` a8xx job, mirrored from `build_turnip.sh`): `patches/a8xx_gen8.patch` = whitebelyash tu8 series (13 commits: DECK_EMU `TU_DEBUG=deck_emu`, gralloc UBWC hack, `disable_gmem`, drm-shim ids, A825, VK1.3 without multiview, a8xx family configs, A810 fixes/feature cuts, forced `nocb`, A825/829 offsets, A810 custom resolve, ir3 UBO coalescing) + `patches/a8xx_shared_mem.py` (`cs_shared_mem_size` 32K -> 64K, x31) | `12b7b819edb4ddd3580e7e5ffe384610ae726c90` (that job clones Mesa `main` unpinned; pinned here to the WN-Turnip commit so the three 8xx builds share one Mesa) | 8xx (built for the Galaxy Fold / Adreno 840 case where WN Balanced performs poorly) |
 
 Notes:
 - The Vauzi 3.6 release names no Mesa commit; its binary embeds `git-25219437df`, a commit that is
@@ -51,9 +53,10 @@ Evaluated once per process on the Bannerlator compositor, first match wins:
    imported one). Taken if it is readable; logged at ERR level as
    `winewayland: Vulkan driver <path> (app-selected)`. Not absolute / not readable: ERR, fall
    through.
-2. `BANNER_WAYLAND_VK_VARIANT=a7xx`, `a8xx` or `a8xx-perf` — the bundled manifest above
-   (`a8xx-perf` maps to `banner_wayland_turnip_a8xx_perf.json`; `a8xx` is the Balanced one, the
-   default an "Auto" choice should make on 8xx). If that file is missing from the wcp: ERR ("… is
+2. `BANNER_WAYLAND_VK_VARIANT=a7xx`, `a8xx`, `a8xx-perf` or `a8xx-gen8` — the bundled manifest
+   above (`a8xx-perf` -> `banner_wayland_turnip_a8xx_perf.json`, `a8xx-gen8` ->
+   `banner_wayland_turnip_a8xx_gen8.json`; `a8xx` is the Balanced one, the default an "Auto" choice
+   should make on 8xx). If that file is missing from the wcp: ERR ("… is
    missing (path), using the plain one"), fall through. Any other value: ERR ("unknown
    BANNER_WAYLAND_VK_VARIANT=…"), fall through (`plain` is accepted silently).
 3. The plain bundled manifest — today's behaviour.
@@ -100,3 +103,14 @@ Wayland Turnip above.
 
 `libwayland-client.so` and `libwayland-egl.so` are Termux's libwayland 1.25.0-1, the version these
 libraries were linked against.
+
+# Keyboard layout names (xkeyboard-config)
+
+`usr/share/X11/xkb/` is xkeyboard-config 2.48's data (Termux x11 package, see `XKB-SOURCE.md`),
+bundled into the wcp as `share/X11/xkb`. The bundled libxkbregistry/libxkbcommon default to
+Termux's private root, which the app cannot read, so `rxkb_context_parse_default_ruleset()` used
+to fail in every container and winewayland named every layout "us". `use_bundled_xkb()`
+(waylanddrv_main.c) now sets `XKB_CONFIG_ROOT=<wcp>/share/X11/xkb` before the compositor is
+contacted, when the variable is unset and `rules/evdev.xml` is readable there, and logs
+`winewayland: Xkb config root <path>`. If parsing still fails the keyboard keeps working with the
+"Xkb registry unavailable, layout names default to us" WARN as before.

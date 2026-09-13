@@ -380,20 +380,27 @@ do
       [ -f "$_WLD"/libdrm.so ] && cp -n "$_WLD"/libdrm.so "$OUTPUT_DIR/lib/" 2>/dev/null || true
       echo "Bundled wayland/xkb runtime libs into wcp lib/"
       # Wayland-capable Turnips (our Banners-Turnip `wayland` build, see android/wayland-deps/TURNIP.md):
-      # the plain driver plus the Adreno 7xx (710/720/722) and the two 8xx tunings (Balanced,
-      # Performance), each with its ICD manifest. winewayland picks one on the Bannerlator compositor
+      # the plain driver plus the Adreno 7xx (710/720/722), the two WN-Turnip 8xx tunings (Balanced,
+      # Performance) and the gen8 8xx build, each with its ICD manifest. winewayland picks one on the Bannerlator compositor
       # (BANNER_WAYLAND_VK_VARIANT / BANNER_WAYLAND_VK_ICD); lib/libvulkan_freedreno_wayland.so is
-      # what the app checks for. All four ship or the build fails: a wcp missing a variant would
+      # what the app checks for. All five ship or the build fails: a wcp missing a variant would
       # silently render 710/720 or 8xx devices on the plain driver, which cannot create a device there.
       if [ -f "$_WLD"/libvulkan_freedreno_wayland.so ]; then
         mkdir -p "$OUTPUT_DIR/share/vulkan/icd.d"
-        for v in "" _a7xx _a8xx _a8xx_perf; do
+        for v in "" _a7xx _a8xx _a8xx_perf _a8xx_gen8; do
           [ -f "$_WLD/libvulkan_freedreno_wayland$v.so" ] && [ -f "$_WLD/../share/vulkan/icd.d/banner_wayland_turnip$v.json" ] \
             || { echo "ERROR: Wayland Turnip variant '$v' (libvulkan_freedreno_wayland$v.so + banner_wayland_turnip$v.json) missing from android/wayland-deps" >&2; exit 1; }
           cp "$_WLD/libvulkan_freedreno_wayland$v.so" "$OUTPUT_DIR/lib/"
           cp "$_WLD/../share/vulkan/icd.d/banner_wayland_turnip$v.json" "$OUTPUT_DIR/share/vulkan/icd.d/"
         done
-        echo "Bundled the Wayland Turnip ICDs (plain, a7xx, a8xx, a8xx_perf) into wcp"
+        echo "Bundled the Wayland Turnip ICDs (plain, a7xx, a8xx, a8xx_perf, a8xx_gen8) into wcp"
+      fi
+      # xkeyboard-config data for the bundled libxkbregistry/libxkbcommon (XKB-SOURCE.md next to it):
+      # winewayland sets XKB_CONFIG_ROOT to it so layouts get their real names.
+      if [ -f "$_WLD"/../share/X11/xkb/rules/evdev.xml ]; then
+        mkdir -p "$OUTPUT_DIR/share/X11"
+        cp -r "$_WLD"/../share/X11/xkb "$OUTPUT_DIR/share/X11/"
+        echo "Bundled xkeyboard-config into wcp share/X11/xkb ($(du -sh "$OUTPUT_DIR/share/X11/xkb" | cut -f1))"
       fi
       # Mesa's EGL (Wayland platform) + Zink for OpenGL, from the same build as that Turnip,
       # with the libwayland-server its EGL links.
