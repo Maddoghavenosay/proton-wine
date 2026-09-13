@@ -7,6 +7,17 @@ drivers (the wrapper, adrenotools builds) have no Wayland WSI, so winewayland po
 `VK_ICD_FILENAMES` at one of these when it runs on the Bannerlator compositor.
 `usr/lib/libdrm.so` (Termux 2.4.134) is what they were linked against and is bundled next to them.
 
+All eight carry Bannerlator's zero-copy WSI (`patches/wayland/banner_ahb_wsi.py`): with the
+compositor's `banner_ahb_v1` global they can allocate swapchain images as gralloc
+`AHardwareBuffer`s and hand them over for the display layer. Since versionCode 6 they follow the
+**live** switch — `banner_ahb_v1` version 2's `mode` event, sent on bind and on every flip of the
+in-game "Zero-copy presentation" toggle — and retire a swapchain built for the other mode
+(`VK_ERROR_OUT_OF_DATE_KHR`, which DXVK, vkd3d-proton and Zink all rebuild on). The registry bind
+clamps to `MIN(advertised, 2)`, and against a compositor that only advertises version 1 (any
+Bannerlator up to 3.1.2-wayland-pre3) the behaviour is exactly versionCode 5's: gralloc images iff
+`BANNER_WSI_AHB=1`, decided per swapchain, nothing ever retired. `BANNER_WSI_AHB=0` forces the
+feature off everywhere.
+
 ## Variants
 
 Each driver is its own Mesa checkout: the plain one is the Banners-Turnip release commit, the
