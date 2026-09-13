@@ -191,9 +191,9 @@ jobs:
           cat > $GITHUB_WORKSPACE/profile.json << EOF
           {
             "type": "Proton",
-            "versionName": "11.0-2-${ARCH_NAME}",
-            "versionCode": 90,
-            "description": "Wayland desktop test build — Proton 11.0-2 ${ARCH_NAME} (bionic) — stock Valve + fast-yield gate + FEX-unixlib loader + DirectAudio v1.3.2 (opt-in: registry Audio=directaudio; pulse/alsa stay default) + Android fixes (noexec/force_anon SD-card boot, drive-root copy guard, C.UTF-8 locale). Bannerlator/WinNative/Winlator-bionic; needs a fresh arm64ec container.",
+            "versionName": "11.0-2.1-${ARCH_NAME}",
+            "versionCode": 1,
+            "description": "EXPERIMENTAL Wayland layer — Proton 11.0-2 ${ARCH_NAME} (bionic) with winewayland.drv + its own Wayland Turnip (Mesa 26.3, Adreno 6xx/730/740/750) for Bannerlator's embedded Wayland compositor; also runs as a normal X11 Proton. Own layer line 11.0-2.1 (never offered as an update to stock 11.0-2). Base: — stock Valve + fast-yield gate + FEX-unixlib loader + DirectAudio v1.3.2 (opt-in: registry Audio=directaudio; pulse/alsa stay default) + Android fixes (noexec/force_anon SD-card boot, drive-root copy guard, C.UTF-8 locale). Bannerlator/WinNative/Winlator-bionic; needs a fresh arm64ec container.",
             "files": [],
             "wine": {
               "binPath": "bin",
@@ -207,9 +207,9 @@ jobs:
           cat > $GITHUB_WORKSPACE/profile-wine.json << EOF
           {
             "type": "Wine",
-            "versionName": "11.0-2-${ARCH_NAME}",
-            "versionCode": 0,
-            "description": "Proton 11.0-2 ${ARCH_NAME} (bionic) — stock Valve + fast-yield gate + FEX-unixlib loader + DirectAudio v1.3.2 (opt-in: registry Audio=directaudio; pulse/alsa stay default). Bannerlator/WinNative/Winlator-bionic; needs a fresh arm64ec container.",
+            "versionName": "11.0-2.1-${ARCH_NAME}",
+            "versionCode": 1,
+            "description": "EXPERIMENTAL Wayland layer — Proton 11.0-2 ${ARCH_NAME} (bionic) with winewayland.drv + own Wayland Turnip. Base: — stock Valve + fast-yield gate + FEX-unixlib loader + DirectAudio v1.3.2 (opt-in: registry Audio=directaudio; pulse/alsa stay default). Bannerlator/WinNative/Winlator-bionic; needs a fresh arm64ec container.",
             "files": [],
             "wine": {
               "binPath": "bin",
