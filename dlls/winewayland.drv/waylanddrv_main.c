@@ -147,6 +147,10 @@ static void use_bundled_drivers(void)
         /* NOT LIBGL_ALWAYS_SOFTWARE: that makes Zink demand a CPU Vulkan device. Our bundled Mesa
          * takes the kopper (Zink) path for a Wayland display without a DRM device on its own. */
         setenv("WINE_USE_EGL", "1", 1);
+        /* win32u's display-cache update would now build a Zink context in every process, and
+         * in the desktop owner that stalls everyone else's display DC. Vulkan already reports
+         * the GPU, so let OpenGL initialise on first real use instead (win32u/sysparams.c). */
+        setenv("WINE_SKIP_OPENGL_GPU_PROBE", "1", 1);
         MESSAGE("winewayland: OpenGL through %s (Zink)\n", path);
     }
 }

@@ -3037,6 +3037,7 @@ static BOOL lock_display_devices( BOOL force )
     UINT64 serial;
     UINT status;
     WCHAR name[MAX_PATH];
+    const char *env;
     BOOL ret = TRUE;
 
     init_display_driver(); /* make sure to load the driver before anything else */
@@ -3062,7 +3063,13 @@ static BOOL lock_display_devices( BOOL force )
     if (force)
     {
         if (!get_vulkan_gpus( &ctx.vulkan_gpus )) WARN( "Failed to find any Vulkan GPU\n" );
-        if (!get_opengl_gpus( &ctx.opengl_gpus )) WARN( "Failed to find any OpenGL GPU\n" );
+        /* The OpenGL list only fills in what Vulkan did not report. With EGL on the Wayland
+         * driver the probe builds a Zink context in every process, and doing that here, under
+         * the display lock in the desktop owner, stalls every other process opening a display
+         * DC. winewayland asks us to leave it to the first real OpenGL use instead. */
+        if ((env = getenv( "WINE_SKIP_OPENGL_GPU_PROBE" )) && atoi( env ))
+            TRACE( "Skipping the OpenGL GPU probe at the driver's request\n" );
+        else if (!get_opengl_gpus( &ctx.opengl_gpus )) WARN( "Failed to find any OpenGL GPU\n" );
         if (!(status = update_display_devices( &ctx ))) commit_display_devices( &ctx );
         else WARN( "Failed to update display devices, status %#x\n", status );
         release_display_manager_ctx( &ctx );
