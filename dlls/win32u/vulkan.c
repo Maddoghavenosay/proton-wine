@@ -423,14 +423,10 @@ static void vulkan_instance_insert_object( struct vulkan_instance *instance, str
         /* rb_put refuses a duplicate key and inserts nothing, so a stale entry would keep
          * shadowing the new object and host-to-client lookups would hand out a freed handle.
          * The driver reuses host handles as soon as an object is destroyed, so this is reachable
-         * whenever something is torn down and rebuilt. Drop the stale entry and insert. */
+         * whenever something is torn down and rebuilt. Say so rather than fail silently; evicting
+         * the stale entry here is not safe, its owner still expects to remove it later. */
         if (rb_put( &impl->objects, &obj->host_handle, &obj->entry ))
-        {
-            struct rb_entry *stale = rb_get( &impl->objects, &obj->host_handle );
-            ERR( "stale object for host handle 0x%s, replacing it\n", wine_dbgstr_longlong( obj->host_handle ) );
-            if (stale) rb_remove( &impl->objects, stale );
-            rb_put( &impl->objects, &obj->host_handle, &obj->entry );
-        }
+            ERR( "host handle 0x%s is already registered, the new object is not\n", wine_dbgstr_longlong( obj->host_handle ) );
         pthread_rwlock_unlock( &impl->objects_lock );
     }
 }
