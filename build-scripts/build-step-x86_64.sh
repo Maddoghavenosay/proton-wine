@@ -75,7 +75,11 @@ do
   if [ "$arg" == "--enable-16kb-pages" ];
   then
     echo "Enabling 16KB page size support..."
-    export TARGET=x86_64-linux-android35
+    # NOTE: this block used to `export TARGET=x86_64-linux-android35`, but CC/CXX/AS were
+    # already bound to the android28 clang above, so every "sdk35" x86_64 build was in
+    # fact an android28 build with 16 KB linker alignment (verified via the ELF
+    # .note.android.ident). Keep that honest: 16 KB alignment on the android28 target,
+    # the same shape as the arm64ec builds.
     export C_OPTS="$C_OPTS -DANDROID_SUPPORT_FLEXIBLE_PAGE_SIZES"
     export CFLAGS="$C_OPTS"
     export CXXFLAGS="$C_OPTS"
