@@ -1,19 +1,31 @@
 # Wayland Turnip
 
-`usr/lib/libvulkan_freedreno_wayland.so` is `libvulkan_freedreno.so` from Termux's
-`mesa-vulkan-icd-freedreno` 26.0.6-3 (aarch64): Turnip built with the KGSL backend and the Wayland
-WSI. The containers' own Vulkan drivers (the wrapper, adrenotools builds) have no Wayland WSI, so
-winewayland points `VK_ICD_FILENAMES` at `share/vulkan/icd.d/banner_wayland_turnip.json` when it
-runs on the Bannerlator compositor. Its libraries come from the imagefs; libwayland-client is
-bundled next to it.
+`usr/lib/libvulkan_freedreno_wayland.so` is OUR build: `libvulkan_freedreno.so` from the
+Banners-Turnip `wayland` branch (`build_wayland.sh`, workflow "Build Wayland variant"), Mesa
+26.3.0-devel at `7cda7850`, NDK r29, API 29: Turnip with the KGSL backend and the Wayland WSI,
+built Linux-style on bionic like Termux's. The containers' own Vulkan drivers (the wrapper,
+adrenotools builds) have no Wayland WSI, so winewayland points `VK_ICD_FILENAMES` at
+`share/vulkan/icd.d/banner_wayland_turnip.json` when it runs on the Bannerlator compositor.
+`usr/lib/libdrm.so` (Termux 2.4.134) is what it was linked against and is bundled next to it.
 
-Source: https://packages-cf.termux.dev/apt/termux-main/pool/main/m/mesa-vulkan-icd-freedreno/mesa-vulkan-icd-freedreno_26.0.6-3_aarch64.deb
+Why ours and not Termux's `mesa-vulkan-icd-freedreno` 26.0.6-3, which this file used to be: with
+Termux's driver, any program that destroys a Vulkan device and creates another (the AIO Graphics
+Test switching backends; DiRT Rally 2.0's probe device before its real one) progressively starves
+and then hangs; and OpenGL through Zink died after a few seconds. Neither happens with this build:
+all eight AIO backends switch fluidly in one launch and OpenGL holds at ~230 fps.
 
-Tried and reverted (2026-09-12): the Banners-Turnip `wayland` branch's own builds. The combined
-Android+Wayland driver loads through AdrenoTools but not through the imagefs Vulkan loader (it needs
-Android's libhardware/libnativewindow); the Linux-style `build_wayland.sh` Turnip loads and creates a
-device ("turnip Mesa driver 26.2.99") but crashes in vkCreateSwapchainKHR (0xc0000005). Termux's
-package applies a set of patches for bionic that ours doesn't yet; revisit with those.
+What the recipe needed (all in build_wayland.sh):
+- `-Dfreedreno-kmds=msm,kgsl`. With `kgsl` alone Mesa's meson decides the system has no KMS/DRM,
+  drops libdrm and never compiles `wsi_common_drm.c`; the Wayland WSI still asks for DRM images, so
+  `vkCreateSwapchainKHR` walks into a compiled-out branch and the guest dies with an access
+  violation. That was the 2026-09-12 "crashes in vkCreateSwapchainKHR" result.
+- With libdrm present Mesa also builds the VK_KHR_display WSI, which stops threads with
+  `pthread_cancel`; bionic has none. `patches/wayland/no_pthread_cancel.py` does what Termux's
+  0006 does (a SIGUSR2 handler that `pthread_exit`s), written against the source text.
+- Termux 0014: the KGSL timestamp wait no longer asserts on an unexpected errno.
+- Built unstripped (`-Dstrip=false`, resolvable crash addresses) with `-Db_ndebug=true`.
+Termux's other patches were checked: 0000/0002/0018 are applied inline; 0008/0015 only act when
+`__TERMUX__` is defined; 0003 only affects the wl_shm path.
 
 # OpenGL (EGL + Zink)
 

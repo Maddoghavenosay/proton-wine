@@ -375,9 +375,12 @@ do
     if [ -d "$_WLD" ]; then
       cp -n "$_WLD"/libwayland-client.so "$_WLD"/libwayland-egl.so \
             "$_WLD"/libxkbcommon.so "$_WLD"/libxkbregistry.so "$OUTPUT_DIR/lib/" 2>/dev/null || true
+      # Our Wayland Turnip links libdrm (its Wayland WSI needs the DRM image path); the imagefs has
+      # one, but ship the copy it was built against so the ICD never depends on that.
+      [ -f "$_WLD"/libdrm.so ] && cp -n "$_WLD"/libdrm.so "$OUTPUT_DIR/lib/" 2>/dev/null || true
       echo "Bundled wayland/xkb runtime libs into wcp lib/"
-      # Wayland-capable Turnip (Termux mesa-vulkan-icd-freedreno) + its ICD manifest, which
-      # winewayland selects when running on the Bannerlator compositor.
+      # Wayland-capable Turnip (our Banners-Turnip `wayland` build, see android/wayland-deps/TURNIP.md)
+      # + its ICD manifest, which winewayland selects when running on the Bannerlator compositor.
       if [ -f "$_WLD"/libvulkan_freedreno_wayland.so ]; then
         cp "$_WLD"/libvulkan_freedreno_wayland.so "$OUTPUT_DIR/lib/"
         mkdir -p "$OUTPUT_DIR/share/vulkan/icd.d"

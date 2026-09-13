@@ -136,12 +136,14 @@ static void use_bundled_drivers(void)
          * (see dlls/winevulkan/loader.c). */
     }
 
-    /* OpenGL through EGL on Zink, opt-in for now (BANNER_WAYLAND_GL=1): with WINE_USE_EGL set,
-     * win32u probes the GPU at every process start, and that probe in the desktop process
-     * deadlocks other processes opening a display DC. */
+    /* OpenGL through EGL on Zink. On by default: with our own Wayland Turnip it renders and stays
+     * up (the AIO Graphics Test runs OpenGL at ~230 fps and switches away from it cleanly), and
+     * Wine's builtin ddraw needs it, so DirectDraw titles are unavailable without it.
+     * BANNER_WAYLAND_GL=0 turns it off. win32u's startup GPU probe stays skipped (below); that probe
+     * in the desktop process used to deadlock every other process opening a display DC. */
     strcpy(path, wine);
     strcat(path, egl);
-    if (!access(path, R_OK) && (env = getenv("BANNER_WAYLAND_GL")) && atoi(env))
+    if (!access(path, R_OK) && (!(env = getenv("BANNER_WAYLAND_GL")) || atoi(env)))
     {
         setenv("MESA_LOADER_DRIVER_OVERRIDE", "zink", 1);
         /* NOT LIBGL_ALWAYS_SOFTWARE: that makes Zink demand a CPU Vulkan device. Our bundled Mesa
