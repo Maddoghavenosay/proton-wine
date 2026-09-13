@@ -1,19 +1,53 @@
 #!/bin/bash
-# Apply GloriousEggroll (GE-Proton) wine patches on top of the Valve proton_11.0
+# Apply the GloriousEggroll (GE-Proton) game-fixes tier on top of the Valve proton
 # source. This runs AFTER the GameNative bionic/android patches have been applied
-# in the build-step scripts — the leaner GE-Proton11-6 game-fixes tier was verified
-# to apply cleanly on the bionic-patched tree in that order.
+# in the build-step scripts — the game-fixes tier was verified to apply cleanly on
+# the bionic-patched tree in that order.
 #
-#   Tier: game-fixes  -- GE per-game compat fixes (GE-Proton11-6). Low conflict.
+#   Tier: game-fixes  -- GE per-game compat fixes. Low conflict.
 #   (ge-video-rework is NOT included in this tier; it is a separate port.)
 #
 # GE applies its patches with `patch -Np1` (fuzz tolerated), so we match that.
-# Any patch that fails to apply is a HARD error so CI surfaces the conflict.
-set -u
+#
+# Fail-hard contract:
+#   * a patch that does not apply is a FATAL error (CI surfaces the conflict);
+#   * after EACH patch a source token unique to that fix must be present in the
+#     file it targets (fuzz can land a hunk, but a rename/refactor can also make
+#     `patch` "succeed" on the wrong function — the marker catches that);
+#   * a patch file with no registered marker is FATAL too: adding a GE fix means
+#     adding its marker below, so nothing can ride in unverified.
+set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT="$(dirname "$SCRIPT_DIR")"
 GE_DIR="$ROOT/android/ge-patches"
+
+# One marker per patch: "<target file>|<literal token that only exists once applied>"
+marker_for() {
+  case "$1" in
+    0001-win32u-Avoid-zero-WM_ACTIVATEAPP-lparam-on-first-for.patch)
+      echo "dlls/win32u/input.c|get_activateapp_thread_id" ;;
+    assettocorsa-hud.patch)
+      echo "dlls/dwrite/font.c|244210" ;;
+    battlenet-launcher-in-process-gpu.patch)
+      echo "dlls/kernelbase/process.c|Battle.net Launcher.exe" ;;
+    dai_xinput.patch)
+      echo "dlls/win32u/input.c|GameLoop" ;;
+    eac_60101_timeout.patch)
+      echo "dlls/ntdll/unix/server.c|EAC_LAUNCHERDIR" ;;
+    maplestory-kernelbase-charprev-null.patch)
+      echo "dlls/kernelbase/string.c|if (!start) return NULL;" ;;
+    maplestory-spi-stickykeys-filterkeys.patch)
+      echo "dlls/win32u/sysparams.c|WINE_SPI_WARN(SPI_SETSTICKYKEYS)" ;;
+    pso2_hack.patch)
+      echo "dlls/ntdll/unix/file.c|WINE_NO_OPEN_FILE_SEARCH" ;;
+    silence-starcitizen-unsupported-os.patch)
+      echo "dlls/user32/msgbox.c|Star Citizen" ;;
+    vgsoh.patch)
+      echo "dlls/kernelbase/file.c|218210" ;;
+    *) echo "" ;;
+  esac
+}
 
 apply_dir() {
   local dir="$1" tier="$2"
@@ -22,15 +56,28 @@ apply_dir() {
   for p in "$dir"/*.patch; do
     [ -e "$p" ] || continue
     n=$((n+1))
-    echo "GE[$tier]: applying $(basename "$p")"
-    if patch -Np1 --fuzz=3 --no-backup-if-mismatch < "$p"; then
-      :
+    local name; name="$(basename "$p")"
+    local marker; marker="$(marker_for "$name")"
+    if [ -z "$marker" ]; then
+      echo "GE[$tier]: FATAL: no verification marker registered for $name (add it to marker_for in $0)"
+      fail=$((fail+1))
+      continue
+    fi
+    local file="${marker%%|*}" token="${marker#*|}"
+    echo "GE[$tier]: applying $name"
+    if ! patch -Np1 --fuzz=3 --no-backup-if-mismatch < "$p"; then
+      echo "GE[$tier]: FATAL: failed to apply $name"
+      fail=$((fail+1))
+      continue
+    fi
+    if grep -qF -- "$token" "$ROOT/$file"; then
+      echo "GE[$tier]:   ok    marker '$token' present in $file"
     else
-      echo "GE[$tier]: FAILED to apply $(basename "$p")"
+      echo "GE[$tier]: FATAL: $name applied but marker '$token' is NOT in $file"
       fail=$((fail+1))
     fi
   done
-  echo "GE[$tier]: applied $((n-fail))/$n patches"
+  echo "GE[$tier]: applied+verified $((n-fail))/$n patches"
   return $fail
 }
 
@@ -39,7 +86,7 @@ rc=0
 apply_dir "$GE_DIR/game-fixes" "game-fixes" || rc=$?
 
 if [ "$rc" -ne 0 ]; then
-  echo "=== GE patch application had $rc failure(s) ==="
+  echo "=== GE patch application had $rc failure(s) — refusing to build a partial GE layer ==="
   exit 1
 fi
-echo "=== GE patches applied cleanly ==="
+echo "=== GE patches applied and verified ==="
