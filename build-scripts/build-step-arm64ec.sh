@@ -381,19 +381,20 @@ do
       echo "Bundled wayland/xkb runtime libs into wcp lib/"
       # Wayland-capable Turnips (our Banners-Turnip `wayland` build, see android/wayland-deps/TURNIP.md):
       # the plain driver plus the Adreno 7xx (710/720/722), the two WN-Turnip 8xx tunings (Balanced,
-      # Performance) and the gen8 8xx build, each with its ICD manifest. winewayland picks one on the Bannerlator compositor
+      # Performance), the gen8 8xx build, StevenMXZ's Gen8 V36, whitebelyash's Mainline v31 and pure
+      # upstream main, each with its ICD manifest. winewayland picks one on the Bannerlator compositor
       # (BANNER_WAYLAND_VK_VARIANT / BANNER_WAYLAND_VK_ICD); lib/libvulkan_freedreno_wayland.so is
-      # what the app checks for. All five ship or the build fails: a wcp missing a variant would
+      # what the app checks for. All eight ship or the build fails: a wcp missing a variant would
       # silently render 710/720 or 8xx devices on the plain driver, which cannot create a device there.
       if [ -f "$_WLD"/libvulkan_freedreno_wayland.so ]; then
         mkdir -p "$OUTPUT_DIR/share/vulkan/icd.d"
-        for v in "" _a7xx _a8xx _a8xx_perf _a8xx_gen8; do
+        for v in "" _a7xx _a8xx _a8xx_perf _a8xx_gen8 _a8xx_smxz _a8xx_white _a8xx_upstream; do
           [ -f "$_WLD/libvulkan_freedreno_wayland$v.so" ] && [ -f "$_WLD/../share/vulkan/icd.d/banner_wayland_turnip$v.json" ] \
             || { echo "ERROR: Wayland Turnip variant '$v' (libvulkan_freedreno_wayland$v.so + banner_wayland_turnip$v.json) missing from android/wayland-deps" >&2; exit 1; }
           cp "$_WLD/libvulkan_freedreno_wayland$v.so" "$OUTPUT_DIR/lib/"
           cp "$_WLD/../share/vulkan/icd.d/banner_wayland_turnip$v.json" "$OUTPUT_DIR/share/vulkan/icd.d/"
         done
-        echo "Bundled the Wayland Turnip ICDs (plain, a7xx, a8xx, a8xx_perf, a8xx_gen8) into wcp"
+        echo "Bundled the Wayland Turnip ICDs (plain, a7xx, a8xx, a8xx_perf, a8xx_gen8, a8xx_smxz, a8xx_white, a8xx_upstream) into wcp"
       fi
       # xkeyboard-config data for the bundled libxkbregistry/libxkbcommon (XKB-SOURCE.md next to it):
       # winewayland sets XKB_CONFIG_ROOT to it so layouts get their real names.

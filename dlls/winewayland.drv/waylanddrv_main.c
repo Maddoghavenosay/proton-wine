@@ -176,10 +176,12 @@ static void use_bundled_xkb(void)
  * Which Vulkan driver the game renders on is the app's call, through the environment:
  *   BANNER_WAYLAND_VK_ICD=<absolute path>   the ICD manifest of a driver the app manages (an
  *                                           imported one); taken when it is readable.
- *   BANNER_WAYLAND_VK_VARIANT=a7xx|a8xx|a8xx-perf|a8xx-gen8
+ *   BANNER_WAYLAND_VK_VARIANT=a7xx|a8xx|a8xx-perf|a8xx-gen8|a8xx-smxz|a8xx-white|a8xx-upstream
  *                                           one of the bundled Turnip variants
  *                                           (share/vulkan/icd.d/banner_wayland_turnip_<v>.json,
- *                                           a8xx-perf -> _a8xx_perf, a8xx-gen8 -> _a8xx_gen8).
+ *                                           a8xx-perf -> _a8xx_perf, a8xx-gen8 -> _a8xx_gen8,
+ *                                           a8xx-smxz -> _a8xx_smxz, a8xx-white -> _a8xx_white,
+ *                                           a8xx-upstream -> _a8xx_upstream).
  *   neither                                 the plain bundled Turnip (banner_wayland_turnip.json).
  * A value that cannot be honoured is reported (ERR) and falls through to the next line. Every
  * outcome is logged as "winewayland: Vulkan driver <manifest>", the app greps for that. */
@@ -208,7 +210,10 @@ static void use_bundled_drivers(void)
         const char *suffix = !strcmp(env, "a7xx") ? "_a7xx" :
                              !strcmp(env, "a8xx") ? "_a8xx" :
                              !strcmp(env, "a8xx-perf") ? "_a8xx_perf" :
-                             !strcmp(env, "a8xx-gen8") ? "_a8xx_gen8" : NULL;
+                             !strcmp(env, "a8xx-gen8") ? "_a8xx_gen8" :
+                             !strcmp(env, "a8xx-smxz") ? "_a8xx_smxz" :
+                             !strcmp(env, "a8xx-white") ? "_a8xx_white" :
+                             !strcmp(env, "a8xx-upstream") ? "_a8xx_upstream" : NULL;
         if (suffix)
         {
             snprintf(path, sizeof(path), "%s%s%s.json", wine, icd_base, suffix);
