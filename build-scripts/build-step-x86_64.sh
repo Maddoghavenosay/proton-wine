@@ -1,5 +1,12 @@
 #!/bin/bash
 
+# Fail hard on any command error. Note: `set -e` does NOT cover commands inside
+# `if` bodies below, so the critical steps (configure / git apply / make) also
+# carry explicit `|| exit $?` — without this a failing `make` used to be masked
+# by the trailing `if [ "$arg" == "--install" ]; then ... fi` returning 0, so
+# CI shipped a broken (skeleton) wcp while reporting success.
+set -eo pipefail
+
 export ARCH="x86_64"
 export WIN_ARCH="x86_64,i386"
 export OUTPUT_DIR="$HOME/compiled-files-x86_64"
@@ -85,15 +92,16 @@ do
     if [ -d "$PROJECT_ROOT/android/android_sysvshm" ]; then
         echo "Building android_sysvshm library..."
         cd "$PROJECT_ROOT/android/android_sysvshm"
-        ./build-x86_64.sh
-        if [ $? -eq 0 ]; then
+        if ./build-x86_64.sh; then
             echo "android_sysvshm built successfully"
             # Copy the library to deps/lib for linking
             mkdir -p "$deps/lib"
             cp build-x86_64/libandroid-sysvshm.so "$deps/lib/"
             echo "Copied libandroid-sysvshm.so to $deps/lib/"
         else
-            echo "Warning: android_sysvshm build failed"
+            # X_LIBS links -landroid-sysvshm: without it the X11 driver silently loses XShm.
+            echo "FATAL: android_sysvshm build failed"
+            exit 1
         fi
         cd "$PROJECT_ROOT"
     fi
@@ -158,7 +166,8 @@ do
       --with-xrender \
       --without-xshape \
       --without-xshm \
-      --without-xxf86vm
+      --without-xxf86vm \
+      || exit $?
 
     echo "Applying patches..."
 
@@ -263,19 +272,23 @@ do
 	  "server_esync.h.patch"
     )
 
+    # Fail-HARD apply loop. The old loop reported a drifted patch as "SKIPPED" and
+    # let the build continue GREEN — that is how GE-11.0-5 once shipped without the
+    # noexec/force_anon fix. `git apply` is atomic (all hunks or none, no fuzz), so a
+    # non-zero exit here means the patch is NOT in the tree: stop the build.
     for patch in "${PATCHES[@]}"; do
       echo "----------------------------------------"
       echo "Applying: $patch"
-
-      if git apply --check "./android/patches/$patch" 2>/dev/null; then
-        if git apply "./android/patches/$patch"; then
-          echo "SUCCESS: $patch applied"
-        else
-          echo "FAILED: error applying $patch"
-        fi
+      if [ ! -f "./android/patches/$patch" ]; then
+        echo "FATAL: ./android/patches/$patch does not exist"
+        exit 1
+      fi
+      if git apply "./android/patches/$patch"; then
+        echo "SUCCESS: $patch applied"
       else
-        echo "SKIPPED: $patch does not apply cleanly"
-        git apply --check "./android/patches/$patch"
+        echo "FATAL: $patch does not apply cleanly; refusing to build a layer without it"
+        git apply --check "./android/patches/$patch" || true
+        exit 1
       fi
     done
 
@@ -284,48 +297,62 @@ do
 
     # ---------------------------------------------------------------------
     # HARD post-apply verification.
-    # The apply loop above is fail-SOFT: a drifted patch is reported "SKIPPED"
-    # and the build stays GREEN, and git-apply success is not proof for a graft
-    # inside a larger multi-hunk patch. Grep the ACTUAL post-apply source for a
-    # token unique to each Android fix; abort the build if any is missing.
+    #
+    # The apply loop above is fail-hard, but it cannot notice a patch that was
+    # dropped from the PATCHES array, a graft that a later upstream change made
+    # a no-op, or an in-tree feature lost in a merge. So grep the ACTUAL
+    # post-apply source for one token per shipped feature and refuse to build a
+    # silently-degraded layer if any is missing. (build-scripts/verify-layer.py
+    # repeats the same idea on the COMPILED binaries after --install.)
     # ---------------------------------------------------------------------
-    echo "Verifying Android bug-fixes actually landed in the tree..."
+    echo "Verifying shipped features are present in the source tree..."
     verify_fail=0
-
-    if ! grep -q 'force_anon' dlls/ntdll/unix/virtual.c; then
-      echo "FATAL: force_anon not present in dlls/ntdll/unix/virtual.c (Fix #1 noexec/force_anon did NOT apply)"
-      verify_fail=1
-    fi
-
-    if ! grep -q 'dir_len' dlls/shell32/shlfileop.c; then
-      echo "FATAL: dir_len guard not present in dlls/shell32/shlfileop.c (Fix #2 drive-root copy guard did NOT apply)"
-      verify_fail=1
-    fi
-
-    if ! grep -q '"C.UTF-8"' dlls/ntdll/unix/env.c; then
-      echo "FATAL: LC_ALL=C.UTF-8 default not present in dlls/ntdll/unix/env.c (Fix #3 locale bring-up did NOT apply)"
-      verify_fail=1
-    fi
-
-    # DirectAudio v1.3.1: BANNER_AUDIO_DIRECT_RUNTIME (live in-game config
-    # mailbox) exists only in the >=1.3 driver; the old v1 driver lacks it.
-    if ! grep -q 'BANNER_AUDIO_DIRECT_RUNTIME' dlls/winedirectaudio.drv/directaudio.c; then
-      echo "FATAL: BANNER_AUDIO_DIRECT_RUNTIME not present in dlls/winedirectaudio.drv/directaudio.c (DirectAudio is NOT the v1.3.1 build)"
-      verify_fail=1
-    fi
-
+    MARKERS=(
+      "dlls/ntdll/unix/virtual.c|force_anon|noexec/force_anon SD-card boot (Dragon Age)"
+      "dlls/shell32/shlfileop.c|dir_len|drive-root FO_COPY guard"
+      "dlls/ntdll/unix/env.c|C.UTF-8|LC_ALL=C.UTF-8 bionic locale bring-up"
+      "dlls/winedirectaudio.drv/directaudio.c|BANNER_AUDIO_DIRECT_MIC|DirectAudio driver is the v1.3.2 build (mic capture)"
+      "dlls/xinput1_3/main.c|transient wait failure in the update thread|xinput WAIT_FAILED retry (controller-dies fix)"
+      "dlls/ws2_32/unixlib.c|EMULATE_V4MAPPED|ws2_32 AI_V4MAPPED emulation (EA DirtySDK DNS)"
+      "dlls/nsiproxy.sys/ip.c|WINE_ANDROID_GATEWAY|nsiproxy default-route fix (EA offline latch)"
+      "dlls/dnsapi/libresolv.c|LIBANDROID_HANDLE|dnsapi Android resolver"
+      "dlls/win32u/clipboard.c|WINE_FROM_ANDROID_CLIPBOARD|Android clipboard bridge (win32u)"
+      "server/fsync.c|!defined(__ANDROID__)|fsync compiled out on Android (seccomp blocks futex_waitv)"
+      "dlls/ntdll/unix/sync.c|WINE_FAST_YIELD|fast-yield gate (in-tree)"
+      "dlls/ntdll/unix/virtual.c|WINEVMEMMAXSIZE|WINEVMEMMAXSIZE address-space cap (in-tree)"
+      "dlls/win32u/font.c|MAX_FONT_HANDLES  32768|realized-font-handle cap 32768 (in-tree)"
+      "dlls/ntdll/signal_arm64ec.c|if (ptr >> 47) return FALSE;|RtlIsEcCode bounds guard (Denuvo / NFS Heat, in-tree)"
+      "programs/explorer/systray.c|WINE_TASKBAR_STYLE|XP taskbar (in-tree)"
+      "dlls/win32u/defwnd.c|WINE_XP_FRAMES|XP window frames (in-tree)"
+      "dlls/ntdll/unix/esync.c|ESYNC_AUTO_EVENT|esync re-added to Wine-11 (Proton 11 dropped it upstream)"
+      "server/esync.c|esync: up and running|esync server side re-added to Wine-11"
+      "dlls/gdiplus/region.c|if (x1_min <= x) x1_min = x + 1;|gdiplus degenerate-span clamp (EA installer wizard)"
+      "dlls/ntdll/unix/loader.c|load_unixlib_by_name|FEX unixlib load-by-name loader"
+    )
+    for row in "${MARKERS[@]}"; do
+      m_file="${row%%|*}"; rest="${row#*|}"; m_token="${rest%%|*}"; m_what="${rest#*|}"
+      if [ -f "$m_file" ] && grep -qF -- "$m_token" "$m_file"; then
+        echo "  ok    $m_what"
+      else
+        echo "  FATAL $m_what -- '$m_token' not found in $m_file"
+        verify_fail=1
+      fi
+    done
     if [ "$verify_fail" != "0" ]; then
-      echo "FATAL: one or more Android bug-fixes failed to apply; refusing to build a silently-broken layer."
+      echo "FATAL: one or more shipped features are missing from the source tree; refusing to build a silently-broken layer."
       exit 1
     fi
-    echo "All Android bug-fixes + DirectAudio v1.3.1 verified present in the tree."
+    echo "All shipped features verified present in the source tree."
     echo "----------------------------------------"
 
     # GE-Proton game-fixes tier, layered AFTER the bionic patches (verified to
-    # apply cleanly on the bionic-patched tree in this order). Hard-fails on any
-    # reject so CI surfaces the conflict.
-    echo "Applying GE-Proton patches..."
-    ./build-scripts/apply-ge-patches.sh
+    # apply cleanly on the bionic-patched tree in this order). apply-ge-patches.sh
+    # hard-fails on any reject AND checks one source marker per patch.
+    if [ -d ./android/ge-patches/game-fixes ]; then
+      echo "Applying GE-Proton patches..."
+      ./build-scripts/apply-ge-patches.sh || exit $?
+    fi
+
   fi
 
   if [ "$arg" == "--build" ]
@@ -335,7 +362,7 @@ do
     rm -rf $OUTPUT_DIR/lib
     rm -rf $OUTPUT_DIR/share
     rm -rf $install_dir
-    make -j$(nproc)
+    make -j$(nproc) || exit $?
   fi
 
   if [ "$arg" == "--install" ]
@@ -345,7 +372,7 @@ do
     mkdir -p $OUTPUT_DIR/lib
     mkdir -p $OUTPUT_DIR/share
     mkdir -p $install_dir
-    make install -j$(nproc)
+    make install -j$(nproc) || exit $?
     echo "Copying files..."
     cp -r $install_dir/bin/wine* $OUTPUT_DIR/bin
     cp -r $install_dir/bin/reg* $OUTPUT_DIR/bin
