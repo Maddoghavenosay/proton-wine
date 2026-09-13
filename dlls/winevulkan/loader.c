@@ -435,9 +435,39 @@ VkResult WINAPI vkCreateInstance(const VkInstanceCreateInfo *create_info,
     return params.result;
 }
 
+/* Creating a Vulkan device after another one has been destroyed wedges the process with the
+ * Wayland container's bundled Turnip: the creating thread blocks on an in-process lock with no
+ * GPU work outstanding and every worker parked. Tearing a device down on its own is fine, and so
+ * is creating one while another lives, so the driver's teardown leaves state the next creation
+ * trips over. The AIO Graphics Test switches backend by destroying one device and building the
+ * next on the same thread, which is why only the second and later switches hang.
+ *
+ * BANNER_WAYLAND_VK_KEEP keeps the host objects alive instead of destroying them: 1 keeps
+ * devices, 2 keeps devices and instances. Unset (the default) behaves exactly as before, so the
+ * X11 path and every other container are untouched. */
+static int banner_vk_keep_level(void)
+{
+    static int cached = -1;
+
+    if (cached < 0)
+    {
+        char buffer[16];
+        DWORD len = GetEnvironmentVariableA("BANNER_WAYLAND_VK_KEEP", buffer, sizeof(buffer));
+        cached = (len && len < sizeof(buffer)) ? atoi(buffer) : 0;
+        if (cached) ERR("winevulkan: keeping Vulkan objects alive, level %d\n", cached);
+    }
+    return cached;
+}
+
 void WINAPI vkDestroyInstance(VkInstance instance, const VkAllocationCallbacks *pAllocator)
 {
     struct vkDestroyInstance_params params;
+
+    if (banner_vk_keep_level() >= 2)
+    {
+        WARN("winevulkan: leaking instance %p instead of destroying it\n", instance);
+        return;
+    }
 
     params.instance = instance;
     params.pAllocator = pAllocator;
@@ -675,6 +705,14 @@ VkResult WINAPI vkCreateDevice(VkPhysicalDevice physical_device, const VkDeviceC
 void WINAPI vkDestroyDevice(VkDevice device, const VkAllocationCallbacks *allocator)
 {
     struct vkDestroyDevice_params params;
+
+    /* See banner_vk_keep_level: the bundled Wayland Turnip hangs the next device creation once a
+     * device has been torn down, so this can keep the host device alive instead. */
+    if (banner_vk_keep_level() >= 1)
+    {
+        WARN("winevulkan: leaking device %p instead of destroying it\n", device);
+        return;
+    }
 
     params.device = device;
     params.pAllocator = allocator;
