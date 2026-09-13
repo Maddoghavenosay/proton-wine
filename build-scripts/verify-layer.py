@@ -131,10 +131,13 @@ def main():
     report(n_pe32 >= 800, "%s has a full DLL set" % os.path.relpath(pe32, root), "%d entries" % n_pe32)
     report(n_unix >= 25, "%s has the unix libs" % os.path.relpath(unix, root), "%d entries" % n_unix)
     report(os.path.isfile(os.path.join(root, "share/wine/wine.inf")), "share/wine/wine.inf present")
+    # Wine-11 scripts symlink bin/wine to the unix loader; Wine-10's install ships the
+    # loader binary itself in bin/. Either is a working layer; absent is not.
     wine = os.path.join(root, "bin/wine")
-    report(os.path.islink(wine) and os.readlink(wine) == "../lib/wine/%s-unix/wine" % a.arch,
-           "bin/wine -> ../lib/wine/%s-unix/wine" % a.arch,
-           os.readlink(wine) if os.path.islink(wine) else "missing")
+    if os.path.islink(wine):
+        report(os.readlink(wine) == "../lib/wine/%s-unix/wine" % a.arch, "bin/wine loader", "symlink -> " + os.readlink(wine))
+    else:
+        report(read(wine)[:4] == b"\x7fELF", "bin/wine loader", "regular ELF" if os.path.isfile(wine) else "missing")
     # 2. ELF properties of the unix side: page alignment + Android API level.
     print("-- ELF (unix side)")
     elfs = [os.path.join(unix, f) for f in sorted(os.listdir(unix))] if os.path.isdir(unix) else []
@@ -149,7 +152,8 @@ def main():
         # wine-preloader is a static, custom-linked binary (fixed -Ttext, no LDFLAGS) and has
         # shipped 4 KB-aligned in every 16 KB build to date (v1..v7, sdk35 included); the
         # dynamic objects are what the 16 KB linker flag governs. Follow-up: align it too.
-        if a.pages == "16k" and al != {0x4000} and os.path.basename(p) != "wine-preloader":
+        # (x86_64 names it wine64-preloader.)
+        if a.pages == "16k" and al != {0x4000} and os.path.basename(p) not in ("wine-preloader", "wine64-preloader"):
             bad_align.append("%s=%s" % (os.path.basename(p), ",".join(hex(x) for x in sorted(al))))
         api = elf_android_api(d)
         if api is not None and api != a.api:
