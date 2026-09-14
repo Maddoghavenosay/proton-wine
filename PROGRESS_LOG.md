@@ -84,7 +84,12 @@ syntax-check clean with gcc and with clang `--target=aarch64-linux-android28`, `
 - Commits on `fix/wayland-hdr-edid` (off `459bf7a8a7c`): `612401793ce` winewayland EDID,
   `05569528f36` ci versionCode 9 → 10 + one description sentence (both profiles).
 - CI run 34909438885 (workflow_dispatch, headSha `05569528f36` verified), artifact
-  `proton-arm64ec-sdk28` → `proton-11.0-2-arm64ec.wcp`. Result: (running).
+  `proton-arm64ec-sdk28` → `proton-11.0-2-arm64ec.wcp`. **Green.** wcp sha256
+  `31d165a58026de7d94f4e6a097c3b918bd72e1256793b70cbccd04c5f56f8a60` (117,477,213 B), profile
+  `Proton 11.0-2.1-arm64ec` versionCode 10 with the HDR sentence. Against v9: `winewayland.so`
+  differs (carries the three variable names and the `HDR10 monitor description (EDID)` line),
+  `win32u.so` and `winevulkan.so` byte-identical, `winevulkan.dll` 4 bytes (PE timestamp and
+  checksum, same size).
 - No Pocket FIT test this round (lead, 2026-09-14): the user tests on the Fold from the lead's
   Gamehub-Components test release. Not merged into `feat/winewayland-desktop-11.0-2` yet
   (fast-forward once the Fold has spoken, as with versionCode 9).
