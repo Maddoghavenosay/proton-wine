@@ -2,6 +2,106 @@
 
 Newest entry at the top.
 
+## 2026-09-14: HDR10 — the monitor's EDID for Windows (versionCode 10); VK_EXT_swapchain_colorspace was never hidden
+
+**Ask:** make HDR10 (already proven on the user's Galaxy Fold with DXVK v3.1 on versionCode 9)
+work with DXVK 2.x and vkd3d-proton, and tell Windows the screen's real brightness. Evidence
+given: with DXVK 2.4.1-gplasync God of War shows no HDR option and `GoW_d3d11.log` prints
+`VK_EXT_swapchain_colorspace — extension supported : 0`; `strings` finds the name twice in the v9
+`winevulkan.dll` and never in `winevulkan.so`.
+
+### 1. VK_EXT_swapchain_colorspace: not missing, and not what DXVK's HDR depends on (no code change)
+- **Wine exposes it already, at the instance level where the spec puts it** (`vk.xml:21961`,
+  `type="instance"`). The host→guest instance filter is in win32u (`vulkan.c:4144-4180`,
+  `vulkan_init_once` → `client_extensions`) and the PE side (`winevulkan/loader.c:358-365, 473-516`),
+  not in `winevulkan.so`, which has no extension-name table at all. v9 binaries from the device:
+  `VK_EXT_swapchain_colorspace` ×1 in `win32u.so`, ×2 in `winevulkan.dll`, ×0 in `winevulkan.so` —
+  exactly the counts of `VK_EXT_surface_maintenance1`, which DXVK's own "Enabled instance
+  extensions" list shows reaching the game. Turnip reports both from the same
+  `#ifdef TU_USE_WSI_PLATFORM` block (`tu_device.cc:185-187` at 7cda7850). make_vulkan skips neither.
+- **DXVK looks for it in the DEVICE list** — since commit `4335eccae9` (2022-12-18): at `4c0cbbef`
+  (= the user's v2.4.1-293-gplasync) `dxvk_extensions.h:315` (DxvkDeviceExtensions),
+  `dxvk_adapter.cpp:892-893` (`m_deviceExtensions` = vkEnumerateDeviceExtensionProperties, :728),
+  enabled in vkCreateDevice (:999, :1110-1111) and logged (:1286-1287). No Mesa driver can list an
+  instance extension there, so that line says 0 on every Mesa system — including the Fold's
+  **working** v3.1 HDR session (`extSwapchainColorSpace : 0` in `gow2/GoW_d3d11.log`).
+- **Nothing in DXVK reads the flag.** Grep of `src/` in v2.1, 2.2, 2.3, 4c0cbbef, 2.5.3, 2.6.2,
+  2.7.1, 3.1: only the adapter/device-info files that enable and log it. DXGI HDR is
+  `dxgi.enableHDR` (DXVK_HDR=1) → `DXGI_OUTPUT_DESC1.ColorSpace` (`dxgi_output.cpp:234`,
+  `dxgi_monitor.cpp:91-95`), plus `CheckColorSpaceSupport` → `Presenter::supportsColorSpace` →
+  `vkGetPhysicalDeviceSurfaceFormatsKHR` (`dxvk_presenter.cpp:384-397, 429-467`), which Mesa's
+  Wayland WSI fills from `wp_color_manager_v1` whatever the instance enabled
+  (`wsi_wl_display_determine_colorspaces`). vkd3d-proton v3.0.1 never names the extension:
+  `dxgi_vk_swap_chain_CheckColorSpaceSupport` (`swapchain.c:1266`) reads surface formats too, and
+  D3D12 titles get their DXGI output from DXVK's `dxgi.dll`.
+- So a winevulkan change could only flip DXVK's log line to 1 (by listing an instance extension
+  among device extensions and stripping it again before the host's vkCreateDevice) — it cannot
+  change what a game sees. Not done.
+- **Why GoW showed no HDR option on 2.4.1 is NOT explained by DXVK's source:** GetDesc1, the
+  monitor colour-space logic, ValidateColorSpaceSupport, D3D11 CheckColorSpaceSupport and
+  `env::getEnvVar` are identical between 4c0cbbef and v3.1. Open; needs a controlled Fold A/B
+  (same shortcut, DXVK 2.4.1 vs v3.1, `DXVK_HDR=1` confirmed in the session log's
+  `session environment:` line, game restarted after the change).
+
+### 2. The EDID (what versionCode 10 adds)
+Before: `winewayland.drv` gives its monitor no EDID, win32u writes `BAD_EDID`
+(`sysparams.c:2024-2030`), DXVK's `readMonitorEdidFromKey` fails ("Failed to get EDID reg key
+size" in every Fold dxgi log) and `NormalizeDisplayMetadata` (`wsi_edid.h:38-56`) substitutes
+1499 / 799 / 0.01 nits (HDR) or 270 / 270 / 0.5 (SDR).
+
+Now (`dlls/winewayland.drv/wayland_edid.c` + `.h`, `display.c`): when any of
+`BANNER_WAYLAND_HDR_MAX_NITS`, `_MAX_AVG_NITS`, `_MIN_NITS` (decimal nits, the app's per-session
+contract) parses, `wayland_add_device_monitor` hands win32u a 256-byte EDID; none set = no EDID,
+exactly as before; X11 untouched (win32u rebuilds the monitor keys on every device update, so an
+X11 session never inherits it). One `winewayland: HDR10 monitor description (EDID) for Windows:
+max … (EDID …), max frame-average …, min … nits` line per process; a malformed value is named
+and ignored.
+- Base block, EDID 1.4: vendor `WAY` (unassigned in hwdata's PnP list), product 1, 2026, digital
+  10 bpc DisplayPort, gamma 2.2, Display P3 primaries + D65 (what DXVK assumes for HDR without an
+  EDID), preferred DTD = the output's current mode (CVT-RB proportions; size clamped to 4095,
+  pixel clock to 655.35 MHz), name "Wayland", two dummy descriptors, one extension.
+- CTA-861 rev 3 block: Colorimetry (BT.2020 RGB) + HDR Static Metadata (traditional SDR + SMPTE
+  ST 2084 EOTFs, type 1; desired content max, max frame-average, min luminance). CTA-861.3 coding:
+  max = 50·2^(cv/32) (cv = round(32·log2(n/50)), 1..255, 0 = not given), min = max·(cv/255)²/100;
+  trailing absent values left out, the min only with a max (libdisplay-info fails a min without
+  one). 1351 nits → cv 152 = 1345.43 nits (the coding's ~2 % step); min 0 → "not given".
+- win32u picks up id `WAY0001`, name "Wayland" and the preferred mode from it.
+
+### Verified off-device against the real parsers (`scratchpad/hdr10/harness/roundtrip.cpp`)
+The committed `wayland_edid.c`, linked with libdisplay-info at `275e6459` (the submodule both
+DXVK 4c0cbbef and v3.1 build), DXVK's own `src/wsi/wsi_edid.cpp` (byte-identical in both) and
+win32u's `get_monitor_info_from_edid` extracted verbatim from `sysparams.c`: 13 scenarios, 0
+failures — no libdisplay-info conformance failure (this revision returns "" for none; its own
+reference EDIDs print the same empty "FAIL" in `di-edid-decode`), `supportsST2084 = 1`, DXVK's
+luminances equal the encoder's decode, all 255 max codes and 255×15 min codes round-trip, the
+env parser takes "1351", " 0.05 ", "0", "1." and rejects "", "-1", "1e3", "12,5", "inf", "nan".
+Fold contract (1351 / 1351 / 0) → `DXGI_OUTPUT_DESC1` with DXVK_HDR=1: MaxLuminance 1345.43,
+MaxFullFrameLuminance 1345.43, MinLuminance 0.01 (DXVK's own stand-in for "not given"), primaries
+(0.6797, 0.3203) (0.2646, 0.6904) (0.1504, 0.0596) white (0.3125, 0.3291). Both changed files
+syntax-check clean with gcc and with clang `--target=aarch64-linux-android28`, `-Wall -Wextra`.
+
+### Build
+- Commits on `fix/wayland-hdr-edid` (off `459bf7a8a7c`): `612401793ce` winewayland EDID,
+  `05569528f36` ci versionCode 9 → 10 + one description sentence (both profiles).
+- CI run 34909438885 (workflow_dispatch, headSha `05569528f36` verified), artifact
+  `proton-arm64ec-sdk28` → `proton-11.0-2-arm64ec.wcp`. Result: (running).
+- No Pocket FIT test this round (lead, 2026-09-14): the user tests on the Fold from the lead's
+  Gamehub-Components test release. Not merged into `feat/winewayland-desktop-11.0-2` yet
+  (fast-forward once the Fold has spoken, as with versionCode 9).
+
+### Carry into v8 (all seven parents)
+- Cherry-pick `612401793ce` (`dlls/winewayland.drv/wayland_edid.c` + `wayland_edid.h` new,
+  `display.c` hunk, one `Makefile.in` SOURCES line). `git merge-tree` against the parents as they
+  are today: clean on proton_11.0, proton_11.0-2, proton_11.3-GE, proton_11.5-GE, proton_11.6-GE;
+  on proton_10.0 and proton_10.34-GE only the `Makefile.in` line conflicts (its context line
+  `wayland_data_device.c` does not exist there — add `wayland_edid.c` to SOURCES by hand),
+  `display.c` merges. It goes on top of the Wayland support itself, like everything on this list.
+- The CI commit `05569528f36` is NOT carried.
+- Optional, not in this build: Proton's winex11 sets `gdi_monitor.hdr_enabled` from DXVK_HDR=1
+  (DisplayConfig ADVANCED_COLOR_INFO → advancedColorSupported/Enabled); winewayland never does.
+  Parity would be one line in `wayland_add_device_monitor` (suggest: only when the EDID is given
+  AND DXVK_HDR=1). Not needed by DXVK or vkd3d-proton.
+
 ## 2026-09-14: native OpenGL black with sound on phones with no DRM node (versionCode 9)
 
 **Bug (user's own Adreno 840, standard Bannerlator, `Proton-11.0-2.1-arm64ec-8`, Turnip
