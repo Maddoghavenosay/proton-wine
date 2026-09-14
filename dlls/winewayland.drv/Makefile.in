@@ -18,6 +18,7 @@ SOURCES = \
 	vulkan.c \
 	wayland.c \
 	wayland_data_device.c \
+	wayland_edid.c \
 	wayland_keyboard.c \
 	wayland_output.c \
 	wayland_pointer.c \
