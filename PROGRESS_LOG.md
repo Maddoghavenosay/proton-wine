@@ -46,11 +46,71 @@ Evidence from the user's 08:30:18 session:
 - `f71f4a2a583` ci: versionCode 7 → 8, plus one sentence added to the description.
   The layer installs as `Proton-11.0-2.1-arm64ec-8`, next to `-7`.
 
-CI run 34846379023 (workflow_dispatch; headSha `f71f4a2a583` verified). No release,
-tag or catalog change.
+CI run 34846379023 (workflow_dispatch; headSha `f71f4a2a583` verified), green.
+The wcp is `proton-11.0-2-arm64ec.wcp` from artifact `proton-arm64ec-sdk28`:
+sha256 `de8dcad0227dbfb0f32fd766a6c34497bd69787b9a62459657a146895a4c5d09`,
+117,465,780 bytes. profile.json reads Proton `11.0-2.1-arm64ec`, versionCode 8.
+explorer.exe carries the UTF-16 string `control.exe` once in each of aarch64-windows
+and i386-windows; v7 carries it zero times. The XP taskbar marker is unchanged.
+No release, tag or catalog change.
+
+### Device proof (AYANEO Pocket FIT, Bannerlator pubg `com.tencent.ig`, Wayland sessions)
+The test layer was hand-installed into its own slot, `contents/Proton/11.0-2.1-arm64ec-8`,
+with app ownership and label. `-7` was left untouched. Both tests ran on throwaway
+containers, each created through the app UI (Wayland, Turnip r4, FEX 2609-stable).
+
+**Before: `Proton-11.0-2.1-arm64ec-7`, container "ZZ CPL v7"**
+- The Start menu shows Control Panel with a plain folder icon, same as the user's
+  screenshot.
+- Clicking it: at 09:04:58.667 an `explorer.exe (pid 11470)` connects. It disconnects
+  at .720 and opens no window. Wine log:
+  `01ac:err:explorer:make_explorer_window Failed to create PIDL for L"::\\{20d04fe0-…}\\::{21ec2020-…}"`.
+- The same layer run from Start-menu `.bat` launchers (the Run box can't be typed into
+  from the test harness):
+  - `control` opens "Wine Control Panel" (Add/Remove Programs, Display Settings,
+    Game Controllers, Internet Settings).
+  - `control appwiz.cpl` opens "Add/Remove Programs".
+  - `rundll32 shell32.dll,Control_RunDLL` opens "Wine Control Panel".
+  - `explorer ::{20D04FE0-…}\::{21EC2020-…}` and `explorer ::{20D04FE0-…}`: explorer
+    exits after about 56 ms with the same ERR. No window.
+- The other XP Start menu entries all open: My Documents, My Pictures and My Music
+  (Wine Explorer windows), My Computer (wfm), Task Manager, Wine Configuration, and
+  the All Programs entries.
+
+**After: `Proton-11.0-2.1-arm64ec-8`, container "ZZ CPL V8"**
+- The Start menu shows Control Panel with the shell32 Control Panel icon (a grey panel
+  with the Wine glass), in the same style as the Task Manager icon below it.
+- Clicking it: at 09:38:50.001 `control.exe (pid 23917)` connects, and at 09:38:50.096
+  the "Wine Control Panel" window opens (Add/Remove Programs, Display Settings, Game
+  Controllers, Internet Settings). No ERR in the log.
+- Double-clicking Add/Remove Programs in that window: `rundll32.exe (pid 24125)`
+  opens the "Add/Remove Programs" window (Install…, list, Modify…/Remove).
+- `explorer ::{20D04FE0-…}\::{21EC2020-…}` opens a "Control Panel" Explorer window
+  listing the four applets with their comments. `explorer ::{20D04FE0-…}` opens
+  "My Computer" (Control Panel, C:, D:, E:, F:, Z:). No PIDL ERR either time.
+- Regression check: My Documents still opens its Explorer window.
+
+The classic Start menu's Control Panel entry uses the same `ShellExecuteEx` →
+`explorer ::{…}` path that the explorer launcher exercises. It was not clicked in
+classic mode.
+
+### Did it ever work before v7?
+From source, no. The pre-XP v6 GE 11.0-6 source (`349547afa45`) and Proton 9
+(`feat/p9-combined`) have the same classic `CSIDL_CONTROLS` Start menu entry and the
+same `GetFullPathNameW` call in `make_explorer_window`, so the stock Start menu's
+Control Panel was already dead. v7 only made the entry more visible. Typing
+`control` in Run… has always worked.
 
 ### Carry into v8 (all seven AIO layers)
-The seven v7 parents have the same bug (see the report). When Wayland is folded
-into v8, carry the two source commits above:
-`2b01f10fcd7` (explorer.c, ~10 lines) and `6b8452edae4` (startmenu.c, ~20 lines).
+All seven v7 parents have both halves of the bug: the XP entry via
+`xp_add_folder(CSIDL_CONTROLS)` and the explorer `GetFullPathNameW` call. On the
+five Wine-11 parents, `programs/explorer/{explorer,startmenu}.c` are byte-identical
+to this branch before the fix. On the two Wine-10 parents, only unrelated
+explorer.c hunks differ. A `git merge-tree` simulation cherry-picks both commits
+cleanly onto all seven. When Wayland is folded into v8, carry:
+`2b01f10fcd7` (explorer.c) and `6b8452edae4` (startmenu.c).
 Do not carry the CI commit; each parent stamps its own versionCode.
+
+Optional follow-up (not done): shell32 still has no `DefaultIcon` for the Control
+Panel CLSID, so the classic menu and Explorer's My Computer view still draw it as a
+folder. The fix would be a `folders.c` fallback to `IDI_SHELL_CONTROL_PANEL`.
