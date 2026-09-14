@@ -90,16 +90,26 @@ containers, each created through the app UI (Wayland, Turnip r4, FEX 2609-stable
   "My Computer" (Control Panel, C:, D:, E:, F:, Z:). No PIDL ERR either time.
 - Regression check: My Documents still opens its Explorer window.
 
-The classic Start menu's Control Panel entry uses the same `ShellExecuteEx` →
-`explorer ::{…}` path that the explorer launcher exercises. It was not clicked in
-classic mode.
+The explorer fix covers every `ShellExecute` of a virtual folder: the XP My Computer
+entry when wfm.exe is absent, the Control Panel fallback when control.exe is missing,
+and any shortcut or program that opens a `::{CLSID}` folder. The classic Start menu
+doesn't need it, because its Control Panel is a cascade (see below).
 
-### Did it ever work before v7?
-From source, no. The pre-XP v6 GE 11.0-6 source (`349547afa45`) and Proton 9
-(`feat/p9-combined`) have the same classic `CSIDL_CONTROLS` Start menu entry and the
-same `GetFullPathNameW` call in `make_explorer_window`, so the stock Start menu's
-Control Panel was already dead. v7 only made the entry more visible. Typing
-`control` in Run… has always worked.
+### Did it ever work before v7? Yes. v7 broke it.
+Device check on the pre-XP layer `Proton-11.0-6-arm64ec-6` (X11 container "ZZ CPL v6",
+stock Wine classic taskbar):
+- Start → **"Control Panel ▶" is a submenu** listing Add/Remove Programs, Display
+  Settings, Game Controllers and Internet Settings.
+- Clicking Add/Remove Programs opens the "Add/Remove Programs" window. It runs through
+  the Control Panel folder's own execute hook, so the only log line is
+  `SHELL_execute flags ignored: 0x00000004` and no explorer child starts.
+
+Stock `add_shell_item` turns a folder item into a cascade and never executes the
+folder itself. v7's XP Start menu replaced that cascade with one flat item that
+executes the Control Panel folder. That is the one path that reaches the stock
+`GetFullPathNameW` bug in explorer.c, so the user's "since v7" is exact. The explorer
+bug itself is old (the v6 source `349547afa45`, Proton 9 `feat/p9-combined` and
+upstream master all have it), but the stock menu never hit it.
 
 ### Carry into v8 (all seven AIO layers)
 All seven v7 parents have both halves of the bug: the XP entry via
