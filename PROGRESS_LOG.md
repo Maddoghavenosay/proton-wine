@@ -42,6 +42,27 @@ versionCode 7's run 34804055227: same Mesa commit, same flags, and the new libEG
 the old libgallium's exports are identical symbol sets (checked with `nm -D`), so nothing on the
 Vulkan side can differ from versionCode 8. Plus TURNIP.md and the versionCode/description.
 
+### Build and device proof
+- CI run 34879146480 (workflow_dispatch on `fix/wayland-gl-no-drm-node`, headSha `aeaff6e8ee3`),
+  artifact `proton-arm64ec-sdk28` → `proton-11.0-2-arm64ec.wcp`, sha256
+  `bce6e7cc0e8b4251e9cc1b58a11c3efe6a485857ec02b270a7bb9a61940e6961` (117,467,136 B), profile
+  `Proton 11.0-2.1-arm64ec` versionCode 9. Full diff against the v8 wcp: `lib/libEGL.so.1`,
+  `profile.json`, and build timestamps in PE/.a files (every PE diff ≤ 12 bytes, same size); every
+  unix-side library, the Turnips and winevulkan included, is byte-identical.
+- **User's Adreno 840 (standard app, pre-release 7): v9 renders Wizardry** ("it works on a840").
+  The wcp is attached to pre-release 7 as `proton-11.0-2.1-arm64ec-wayland-v9.wcp` in place of v8.
+- Pocket FIT (Adreno 750, node present), pre-release-7-equivalent app, throwaway container on -9:
+  Wizardry `feedback ready: 8 format/modifier pairs, main device 226:128` → `is presenting GPU frames
+  through Wayland: 1280x720, format XR24, qcom_compressed` → `300 GPU frames from games` per 10 s;
+  Wine `+wgl`: `accelerated: 1`, `zink Vulkan 1.4(Turnip Adreno (TM) 750 (MESA_TURNIP))`, no
+  `wayland-egl:` line (stock DRM path). Insane 2 (DXVK) `143.4 fps | ~16k GPU frames` per 10 s.
+- Pocket FIT with the compositor forced to advertise `main device 0:0` (debug app switch
+  `BANNER_WAYLAND_NO_RENDER_NODE=1`, the A840's condition): on -8, `0 GPU frames from games | 300
+  window redraws`, Wine's display EGLDevice = Mesa's software one (`accelerated: 0`) = black; on -9,
+  `MESA-EGL: warning: wayland-egl: the compositor names no DRM render node this process can open;
+  running zink on the Vulkan device without one`, display device `0x0` (no EGLDevice), `accelerated:
+  1`, `zink … Turnip Adreno (TM) 750`, `300 GPU frames from games` per 10 s, HUD "OpenGL 30.0 fps".
+
 ### Carry into v8 (all seven parents)
 - `android/wayland-deps/usr/lib/libEGL.so.1` from Banners-Turnip `wayland` at or after
   `644f1a5c` (the patch is applied on every build there, so any later run carries it; the v8
