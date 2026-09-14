@@ -237,9 +237,18 @@ static void use_bundled_drivers(void)
         pin_icd_library(icd);
     }
 
-    /* OpenGL through EGL on Zink. On by default: with our own Wayland Turnip it renders and stays
-     * up (the AIO Graphics Test runs OpenGL at ~230 fps and switches away from it cleanly), and
-     * Wine's builtin ddraw needs it, so DirectDraw titles are unavailable without it.
+    /* OpenGL through EGL on Zink. On by default: Wine's builtin opengl32 and ddraw have nowhere
+     * else to go, so native GL and DirectDraw titles are unavailable without it.
+     * No fps number belongs here. This comment used to cite "the AIO Graphics Test runs OpenGL at
+     * ~230 fps" as proof the path worked; that test presents every one of its backends - its
+     * OpenGL one included - through a Vulkan swapchain (its queues are all {mesa vk ...}, never a
+     * {mesa egl ...}), so it never touched EGL at all. What this path actually did until the
+     * versionCode 7 layer was put every Zink display on Mesa's software Wayland backend, which
+     * this gallium build has no rasteriser for (zink only, no LLVM): a native GL window committed
+     * never-written buffers and came out solid black, with no GPU frame reaching the compositor.
+     * The layer's Mesa now takes EGL's Wayland DRM path, where it reads the compositor's dma-buf
+     * feedback for a render node and runs on zink + kopper: GL renders on the Turnip below and
+     * presents through its Vulkan WSI, like every other game.
      * BANNER_WAYLAND_GL=0 turns it off. win32u's startup GPU probe stays skipped (below); that probe
      * in the desktop process used to deadlock every other process opening a display DC. */
     strcpy(path, wine);
@@ -247,8 +256,10 @@ static void use_bundled_drivers(void)
     if (!access(path, R_OK) && (!(env = getenv("BANNER_WAYLAND_GL")) || atoi(env)))
     {
         setenv("MESA_LOADER_DRIVER_OVERRIDE", "zink", 1);
-        /* NOT LIBGL_ALWAYS_SOFTWARE: that makes Zink demand a CPU Vulkan device. Our bundled Mesa
-         * takes the kopper (Zink) path for a Wayland display without a DRM device on its own. */
+        /* NOT LIBGL_ALWAYS_SOFTWARE: that makes Zink demand a CPU Vulkan device, of which there is
+         * none here - the game dies with "No matching GL pixel format available". The bundled Mesa
+         * needs no such push: MESA_LOADER_DRIVER_OVERRIDE alone puts it on zink + kopper through
+         * EGL's Wayland DRM path. */
         setenv("WINE_USE_EGL", "1", 1);
         /* win32u's display-cache update would now build a Zink context in every process, and
          * in the desktop owner that stalls everyone else's display DC. Vulkan already reports

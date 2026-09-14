@@ -93,8 +93,12 @@ it off) and reaches the same driver through the imagefs Vulkan loader.
 Why ours and not Termux's `mesa-vulkan-icd-freedreno` 26.0.6-3, which the plain file used to be: with
 Termux's driver, any program that destroys a Vulkan device and creates another (the AIO Graphics
 Test switching backends; DiRT Rally 2.0's probe device before its real one) progressively starves
-and then hangs; and OpenGL through Zink died after a few seconds. Neither happens with this build:
-all eight AIO backends switch fluidly in one launch and OpenGL holds at ~230 fps.
+and then hangs; and OpenGL through Zink died after a few seconds. That does not happen with this
+build: all eight AIO backends switch fluidly in one launch. (The "OpenGL holds at ~230 fps" that
+used to stand here was not a measurement of this path at all: the AIO Graphics Test presents every
+one of its backends, its OpenGL one included, through a Vulkan swapchain - its queues are all
+`{mesa vk ...}`, never a `{mesa egl ...}` - so it never went through EGL. The EGL path is measured
+with a real GL title instead.)
 
 What the recipe needed (all in build_wayland.sh):
 - `-Dfreedreno-kmds=msm,kgsl`. With `kgsl` alone Mesa's meson decides the system has no KMS/DRM,
@@ -114,10 +118,30 @@ Termux's other patches were checked: 0000/0002/0018 are applied inline; 0008/001
 `usr/lib/libEGL.so.1`, `libGLESv2.so.2` and `libgallium-26.3.0-devel.so` are Mesa 26.3.0-devel at
 7cda7850edd103ace21aac37d416d2fdf7a282e1 (the Banners-Turnip release commit), from the same
 `build_wayland.sh` run and tree as the plain Turnip: EGL on the Wayland platform with Zink, no LLVM,
-no GLX, as a Linux-style build on bionic like Termux's Mesa, with EGL patched to take its kopper (Zink)
-path for a Wayland display without a DRM device. winewayland points Mesa at Zink
+no GLX, as a Linux-style build on bionic like Termux's Mesa. winewayland points Mesa at Zink
 (`MESA_LOADER_DRIVER_OVERRIDE=zink`, `WINE_USE_EGL=1`; NOT `LIBGL_ALWAYS_SOFTWARE`, which makes
 Zink demand a CPU Vulkan device) when these are present.
+
+**Since versionCode 7 this EGL goes through Mesa's Wayland _DRM_ path, and that is what makes
+native OpenGL work at all.** Up to versionCode 6 `build_wayland.sh` forced every Zink display onto
+`dri2_initialize_wayland_swrast()` - a path with no `zwp_linux_dmabuf_v1` branch at any version,
+which therefore never sees the compositor's dma-buf feedback, never gets a render node, and leaves
+`fd_render_gpu` at -1, which `dri2_setup_device()` refuses unless `ForceSoftware` is set (and
+`ForceSoftware` makes Zink demand a CPU Vulkan device). So the kopper screen that patch was written
+for could never be built: EGL retried in software, this gallium build has no rasteriser, and native
+GL windows committed never-written buffers - solid black, no GPU frame, from the first Wayland
+build until 2026-09-13. Stock Mesa instead takes `dri2_initialize_wayland_drm()`, which binds
+dma-buf at `MIN(version, 4)`, takes `main_device` out of the default feedback (the compositor has
+advertised version 4 with a real format table since Bannerlator's 2026-09-13 build), opens that
+render node and lands on `driver_name = zink`, `kopper = true`. GL then renders on the Turnip above
+and presents through its Vulkan WSI - the same swapchain code, zero-copy `banner_ahb_v1` included,
+that every Vulkan game uses. Note what the render node is here: `/dev/dri/renderD128` is the
+display controller (`msm_drm`), not the Adreno, which is reached with KGSL; nothing renders on it.
+It only has to exist, open, and be describable through libdrm's `/sys/dev/char/<maj>:<min>/device`
+walk, because Zink matches the physical device by DRM major/minor and falls back to "the only
+Vulkan device there is" when no match exists - which, with one ICD in `VK_ICD_FILENAMES`, is our
+Turnip. `-Dllvm=disabled` stays: on this path nothing is rasterised on the CPU, and llvmpipe would
+only add a large CPU renderer nothing would ever pick.
 Zink opens `libvulkan.so.1`, the imagefs Vulkan loader, which follows `VK_ICD_FILENAMES` to the
 Wayland Turnip above.
 
