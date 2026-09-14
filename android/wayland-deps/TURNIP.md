@@ -117,8 +117,14 @@ Termux's other patches were checked: 0000/0002/0018 are applied inline; 0008/001
 
 `usr/lib/libEGL.so.1`, `libGLESv2.so.2` and `libgallium-26.3.0-devel.so` are Mesa 26.3.0-devel at
 7cda7850edd103ace21aac37d416d2fdf7a282e1 (the Banners-Turnip release commit), from the same
-`build_wayland.sh` run and tree as the plain Turnip: EGL on the Wayland platform with Zink, no LLVM,
-no GLX, as a Linux-style build on bionic like Termux's Mesa. winewayland points Mesa at Zink
+`build_wayland.sh` tree as the plain Turnip: EGL on the Wayland platform with Zink, no LLVM,
+no GLX, as a Linux-style build on bionic like Termux's Mesa. Since versionCode 9, `libEGL.so.1`
+alone comes from a later run (Banners-Turnip `wayland` `644f1a5c`, workflow run 34877806759, the
+no-render-node fix below) while every other library is still versionCode 7's run 34804055227: the
+fix changes nothing but EGL's Wayland platform code, the two runs build the same Mesa commit with
+the same flags, the new libEGL imports exactly the symbols the old one did and the old
+libgallium exports exactly what the new run's does - so the Vulkan drivers and Zink stay the
+bytes already proven, and only EGL changed. winewayland points Mesa at Zink
 (`MESA_LOADER_DRIVER_OVERRIDE=zink`, `WINE_USE_EGL=1`; NOT `LIBGL_ALWAYS_SOFTWARE`, which makes
 Zink demand a CPU Vulkan device) when these are present.
 
@@ -137,11 +143,29 @@ render node and lands on `driver_name = zink`, `kopper = true`. GL then renders 
 and presents through its Vulkan WSI - the same swapchain code, zero-copy `banner_ahb_v1` included,
 that every Vulkan game uses. Note what the render node is here: `/dev/dri/renderD128` is the
 display controller (`msm_drm`), not the Adreno, which is reached with KGSL; nothing renders on it.
-It only has to exist, open, and be describable through libdrm's `/sys/dev/char/<maj>:<min>/device`
-walk, because Zink matches the physical device by DRM major/minor and falls back to "the only
-Vulkan device there is" when no match exists - which, with one ICD in `VK_ICD_FILENAMES`, is our
-Turnip. `-Dllvm=disabled` stays: on this path nothing is rasterised on the CPU, and llvmpipe would
-only add a large CPU renderer nothing would ever pick.
+Zink matches the physical device by DRM major/minor and falls back to "the only Vulkan device
+there is" when no match exists - which, with one ICD in `VK_ICD_FILENAMES`, is our Turnip.
+`-Dllvm=disabled` stays: on this path nothing is rasterised on the CPU, and llvmpipe would only add
+a large CPU renderer nothing would ever pick.
+
+**Since versionCode 9 the render node is optional.** Retail phones (Adreno 830/840 reports,
+2026-09-14) give apps no `/dev/dri` node at all, so the compositor's feedback names `main_device`
+0:0; stock Mesa then has `fd_render_gpu = -1`, still builds the kopper screen (fd -1 means "no DRM"
+in `kopper_init_screen`), but `dri2_setup_device(disp, false)` fails the display
+(`loader_is_device_render_capable(-1)`, no render-only fallback for -1) and `eglInitialize` retries
+in software: black window, sound playing - on every such phone, since versionCode 7. Banners-Turnip
+`patches/wayland/egl_wayland_no_drm_node.py` (applied by `build_wayland.sh`) changes
+`dri2_initialize_wayland_drm()` only: when the display is kopper and there is no usable node (none
+in the feedback, or one `loader_is_device_render_capable()`/`_eglFindDevice()` cannot place under
+an enforcing SELinux policy - exactly when the stock call would fail), it drops the fd, builds the
+kopper screen without one (`pipe_loader_vk_probe_dri` -> `zink_create_screen` -> the one Vulkan
+device, as X11's `LIBGL_KOPPER_DRI2` path does) and leaves the display without an EGLDevice (as
+Android's pure-swrast path does; the software EGLDevice would make win32u report the display
+unaccelerated). A node that works keeps the stock path. `wine_debug.log` shows which ran:
+`MESA-EGL: warning: wayland-egl: the compositor names no DRM render node this process can open;
+running zink on the Vulkan device without one` (this path), `… OpenGL is on Mesa's wl_shm software
+path … the window will stay black` (the software fallback, which still means black), nothing new
+on the DRM path.
 Zink opens `libvulkan.so.1`, the imagefs Vulkan loader, which follows `VK_ICD_FILENAMES` to the
 Wayland Turnip above.
 

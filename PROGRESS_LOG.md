@@ -2,6 +2,54 @@
 
 Newest entry at the top.
 
+## 2026-09-14: native OpenGL black with sound on phones with no DRM node (versionCode 9)
+
+**Bug (user's own Adreno 840, standard Bannerlator, `Proton-11.0-2.1-arm64ec-8`, Turnip
+a8xx-white; also reported on Adreno 830):** Wizardry (native OpenGL) plays sound behind a
+black window. Session log: `feedback ready: 8 format/modifier pairs, main device 0:0`, then
+`0 GPU frames from games | ~293 window redraws` every 10 s. Vulkan/DXVK games are fine.
+
+### Root cause (Mesa source at 7cda7850, the tree libEGL/libgallium come from)
+1. The phone gives apps no `/dev/dri` node, so the compositor's dma-buf feedback names
+   `main_device` 0:0 (`dmabuf_render_node()` finds nothing to `stat`).
+2. `default_dmabuf_feedback_main_device()` → `loader_get_render_node(0:0)` → NULL →
+   `fd_render_gpu` stays -1 (this build has no wl_drm fallback: `HAVE_BIND_WL_DISPLAY` off).
+3. `dri2_initialize_wayland_drm()` builds the kopper screen anyway (fd -1 means "no DRM" in
+   `kopper_init_screen` → `pipe_loader_vk_probe_dri` → `zink_create_screen`), then
+   **`dri2_setup_device(disp, false)` (platform_wayland.c:2752) fails**:
+   `loader_is_device_render_capable(-1)` is false and `dri_query_compatible_render_only_device_fd(-1)`
+   gives -1 (egl_dri2.c:862-868).
+4. `eglInitialize` retries with `Zink=FALSE, ForceSoftware=TRUE` → the wl_shm software path,
+   which this build cannot draw (gallium = zink only, no LLVM) → black.
+The Pocket FIT never hit it: its `/dev/dri/renderD128` (msm display node) opens and is
+describable, so step 2 gets a real fd.
+
+### Fix (Banners-Turnip `wayland`, `patches/wayland/egl_wayland_no_drm_node.py`)
+In `dri2_initialize_wayland_drm()` only: when the display is kopper and there is no usable
+render node (none from the feedback, or one `loader_is_device_render_capable()` /
+`_eglFindDevice()` cannot place — exactly when the stock `dri2_setup_device` call would fail),
+close the fd, build the kopper screen with fd -1 (zink on the one Vulkan device, as X11's
+`LIBGL_KOPPER_DRI2` path does), and skip `dri2_setup_device` (no EGLDevice, as Android's
+pure-swrast path does; the software EGLDevice would make win32u report the display as
+unaccelerated). A node that works keeps the stock path. One warning line each on the no-node
+path and on the software fallback. See `android/wayland-deps/TURNIP.md`.
+
+### What changed in this repo
+Only `android/wayland-deps/usr/lib/libEGL.so.1` (sha256 `a9b5f3ad…55519`, from Banners-Turnip
+`wayland` `644f1a5c`, run 34877806759, artifact `banner-mesa-wayland`). Every other library -
+the eight Turnips, libgallium (Zink), libGLESv2, libdrm, libwayland - stays the bytes of
+versionCode 7's run 34804055227: same Mesa commit, same flags, and the new libEGL's imports and
+the old libgallium's exports are identical symbol sets (checked with `nm -D`), so nothing on the
+Vulkan side can differ from versionCode 8. Plus TURNIP.md and the versionCode/description.
+
+### Carry into v8 (all seven parents)
+- `android/wayland-deps/usr/lib/libEGL.so.1` from Banners-Turnip `wayland` at or after
+  `644f1a5c` (the patch is applied on every build there, so any later run carries it; the v8
+  port vendors one run's full set as before).
+- `android/wayland-deps/TURNIP.md`: the "Since versionCode 9 the render node is optional"
+  paragraph and the libEGL provenance sentence (reword the latter if v8 vendors one full run).
+- No Wine source change. The CI commit (versionCode 8 → 9, description sentence) is NOT carried.
+
 ## 2026-09-14: XP Start menu "Control Panel" did nothing (versionCode 8)
 
 **Bug (user, 2026-09-14 08:31, container 7 on `Proton-11.0-2.1-arm64ec-7`):** in the
