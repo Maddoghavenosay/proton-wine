@@ -90,6 +90,24 @@ static const struct wayland_edid_hdr *get_edid_hdr(void)
     return edid_hdr_given ? &edid_hdr : NULL;
 }
 
+/* Which process described the screen, and what win32u was handed: once per process, and again
+ * if it changes. win32u serializes display updates, so no lock is needed here. */
+static void report_edid_handoff(const char *output_name, const struct wayland_output_mode *mode,
+                                UINT edid_len)
+{
+    static UINT last_len = ~0u;
+    static int last_width, last_height;
+
+    if (edid_len == last_len && mode->width == last_width && mode->height == last_height) return;
+    last_len = edid_len;
+    last_width = mode->width;
+    last_height = mode->height;
+
+    MESSAGE("winewayland: %s (pid %04x) built the screen's EDID for output %s (%dx%d) and hands "
+            "win32u %u bytes\n", process_name ? process_name : "?", (UINT)GetCurrentProcessId(),
+            output_name ? output_name : "?", mode->width, mode->height, edid_len);
+}
+
 struct output_info
 {
     int x, y;
@@ -280,6 +298,7 @@ static void wayland_add_device_monitor(const struct gdi_device_manager *device_m
     {
         monitor.edid_len = wayland_edid_build(edid, hdr, mode->width, mode->height, mode->refresh);
         monitor.edid = edid;
+        report_edid_handoff(output_info->output->name, mode, monitor.edid_len);
     }
 
     TRACE("name=%s rc_monitor=rc_work=%s edid_len=%u\n",

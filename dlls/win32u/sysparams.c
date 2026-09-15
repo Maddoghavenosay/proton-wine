@@ -1095,6 +1095,10 @@ struct device_manager_ctx
     /* for the virtual desktop settings */
     BOOL is_primary;
     DEVMODEW primary;
+    /* the EDID of the primary screen's monitor, which the virtual desktop monitor shares */
+    unsigned char *primary_edid;
+    UINT primary_edid_len;
+    char primary_monitor_path[MAX_PATH];
 };
 
 static void link_device( const char *instance, const char *class )
@@ -2118,6 +2122,16 @@ static void add_monitor( const struct gdi_monitor *gdi_monitor, void *param )
         TRACE( "created monitor %p for source %p\n", monitor, source );
         source->monitor_count++;
         ctx->monitor_count++;
+
+        /* Remember the primary screen's description: a virtual desktop is shown on that
+         * screen, and add_virtual_source gives its monitor the same EDID. */
+        if (ctx->is_primary && !ctx->primary_edid && gdi_monitor->edid && gdi_monitor->edid_len &&
+            (ctx->primary_edid = malloc( gdi_monitor->edid_len )))
+        {
+            memcpy( ctx->primary_edid, gdi_monitor->edid, gdi_monitor->edid_len );
+            ctx->primary_edid_len = gdi_monitor->edid_len;
+            strcpy( ctx->primary_monitor_path, monitor->path );
+        }
     }
 }
 
@@ -2416,6 +2430,10 @@ static void release_display_manager_ctx( struct device_manager_ctx *ctx )
 
     free_gpu_infos( &ctx->vulkan_gpus );
     free_gpu_infos( &ctx->opengl_gpus );
+
+    free( ctx->primary_edid );
+    ctx->primary_edid = NULL;
+    ctx->primary_edid_len = 0;
 }
 
 static BOOL is_monitor_active( struct monitor *monitor )
@@ -2963,6 +2981,11 @@ static BOOL add_virtual_source( struct device_manager_ctx *ctx )
     monitor.rc_monitor.bottom = current.dmPelsHeight;
     monitor.rc_work.right = current.dmPelsWidth;
     monitor.rc_work.bottom = current.dmPelsHeight;
+    /* The virtual desktop is shown on the primary screen, and its monitor is the only active
+     * one: DisplayConfig and DXGI (DXVK reads the EDID of the monitor on the active path) must
+     * find that screen's description here, not on the detached physical monitor. */
+    monitor.edid = ctx->primary_edid;
+    monitor.edid_len = ctx->primary_edid_len;
     add_monitor( &monitor, ctx );
 
     /* Expose the virtual source display modes as physical modes, to avoid DPI scaling */
@@ -3025,6 +3048,54 @@ void reset_monitor_update_serial(void)
     pthread_mutex_unlock( &display_lock );
 }
 
+/* After a display update in which the driver described the primary screen with an EDID, say
+ * what the active monitors (the ones DisplayConfig and DXGI report) now hold in the registry:
+ * one line per process, repeated only when it changes. display_lock must be held. */
+static void report_monitor_edids( const char *screen_path, UINT screen_edid_len )
+{
+    static char last_line[1024];
+    const WCHAR *p, *appname = NtCurrentTeb()->Peb->ProcessParameters->ImagePathName.Buffer;
+    char buffer[4096], line[1024], process[64];
+    KEY_VALUE_PARTIAL_INFORMATION *value = (void *)buffer;
+    struct monitor *monitor;
+    HKEY hkey, subkey;
+    UINT i, pos, active = 0;
+    ULONG size;
+
+    if ((p = wcsrchr( appname, '/' ))) appname = p + 1;
+    if ((p = wcsrchr( appname, '\\' ))) appname = p + 1;
+    for (i = 0; appname[i] && i < sizeof(process) - 1; i++) process[i] = appname[i] < 0x80 ? appname[i] : '?';
+    process[i] = 0;
+
+    pos = snprintf( line, sizeof(line), "win32u: display update in %s (pid %04x)%s: the screen's EDID (%u bytes) "
+                    "is on %s;", process, (UINT)GetCurrentProcessId(),
+                    is_virtual_desktop() ? " on a virtual desktop" : "", screen_edid_len, screen_path );
+
+    LIST_FOR_EACH_ENTRY( monitor, &monitors, struct monitor, entry )
+    {
+        if (!monitor->source || !is_monitor_active( monitor )) continue;
+        active++;
+        size = 0;
+        if ((hkey = reg_open_ascii_key( enum_key, monitor->path )))
+        {
+            if ((subkey = reg_open_ascii_key( hkey, "Device Parameters" )))
+            {
+                size = query_reg_ascii_value( subkey, "EDID", value, sizeof(buffer) );
+                NtClose( subkey );
+            }
+            NtClose( hkey );
+        }
+        if (pos < sizeof(line))
+            pos += snprintf( line + pos, sizeof(line) - pos, " active monitor %s: Device Parameters\\EDID %s%u bytes;",
+                             monitor->path, size ? "" : "MISSING, ", (UINT)size );
+    }
+    if (!active && pos < sizeof(line)) snprintf( line + pos, sizeof(line) - pos, " no active monitor;" );
+
+    if (!strcmp( line, last_line )) return;
+    strcpy( last_line, line );
+    MESSAGE( "%s\n", line );
+}
+
 static BOOL lock_display_devices( BOOL force )
 {
     static const WCHAR wine_service_station_name[] =
@@ -3035,8 +3106,9 @@ static BOOL lock_display_devices( BOOL force )
         .vulkan_gpus = LIST_INIT(ctx.vulkan_gpus),
     };
     UINT64 serial;
-    UINT status;
+    UINT status, screen_edid_len = 0;
     WCHAR name[MAX_PATH];
+    char screen_path[MAX_PATH];
     const char *env;
     BOOL ret = TRUE;
 
@@ -3072,9 +3144,11 @@ static BOOL lock_display_devices( BOOL force )
         else if (!get_opengl_gpus( &ctx.opengl_gpus )) WARN( "Failed to find any OpenGL GPU\n" );
         if (!(status = update_display_devices( &ctx ))) commit_display_devices( &ctx );
         else WARN( "Failed to update display devices, status %#x\n", status );
+        if ((screen_edid_len = ctx.primary_edid_len)) strcpy( screen_path, ctx.primary_monitor_path );
         release_display_manager_ctx( &ctx );
 
         ret = update_display_cache_from_registry( serial );
+        if (ret && screen_edid_len) report_monitor_edids( screen_path, screen_edid_len );
     }
 
     if (!ret)
