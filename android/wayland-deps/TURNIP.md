@@ -18,6 +18,25 @@ Bannerlator up to 3.1.2-wayland-pre3) the behaviour is exactly versionCode 5's: 
 `BANNER_WSI_AHB=1`, decided per swapchain, nothing ever retired. `BANNER_WSI_AHB=0` forces the
 feature off everywhere.
 
+**Since versionCode 12 those gralloc buffers can be UBWC-compressed.** QTI gralloc compresses only
+when the producer sets its vendor bit `GRALLOC_USAGE_PRIVATE_ALLOC_UBWC` (`AHARDWAREBUFFER_USAGE_VENDOR_0`,
+bit 28) with a GPU usage and no CPU bit; Mesa never set it, so every zero-copy swapchain up to
+versionCode 11 was linear (the Pocket FIT and the Fold both logged `on gralloc buffers: linear`).
+The eight drivers (Banners-Turnip `wayland` `0121416`, workflow run 34999563098) now ask gralloc in
+turn for UBWC (usage `0x10000b00`), then the old plain request, then a CPU-bit (linear) one. UBWC is
+asked for only when the chain's modifier list holds `QCOM_COMPRESSED` - the compositor offers it
+for the format (the app's `BANNER_WAYLAND_UBWC=0` takes it away) and the driver can create the
+swapchain's usage as UBWC - and never for storage swapchains or with `BANNER_WSI_AHB_LINEAR=1`. A
+UBWC buffer is kept only when its QTI private handle (`'gmsm'`) says UBWC, `vkCreateImage` accepts
+gralloc's pitch with `QCOM_COMPRESSED`, and gralloc's buffer holds the driver's whole UBWC image;
+anything else falls to the next request. A handle without `'gmsm'` (newer grallocs, e.g. the Fold's
+2 fds / 34 ints) ends on the CPU-bit request exactly as before, and its ints are printed once per
+request for a future reader. `wine_debug.log` names the result once per swapchain:
+`banner-ahb: WxH swapchain (N images) on gralloc buffers: UBWC (QCOM_COMPRESSED), stride S px`, or
+`… linear, stride S px (no UBWC: <why>)`. The compositor needs no change: the zero-copy layer
+hands the buffer to SurfaceControl as is, and its log already says `AHB swapchain … UBWC
+(QCOM_COMPRESSED)` when that is what arrives.
+
 ## Variants
 
 Each driver is its own Mesa checkout: the plain one is the Banners-Turnip release commit, the
@@ -124,7 +143,10 @@ no-render-node fix below) while every other library is still versionCode 7's run
 fix changes nothing but EGL's Wayland platform code, the two runs build the same Mesa commit with
 the same flags, the new libEGL imports exactly the symbols the old one did and the old
 libgallium exports exactly what the new run's does - so the Vulkan drivers and Zink stay the
-bytes already proven, and only EGL changed. winewayland points Mesa at Zink
+bytes already proven, and only EGL changed. Since versionCode 12 the eight Turnips come from
+Banners-Turnip `wayland` `0121416`, run 34999563098 (the UBWC request above); that run's libEGL,
+libGLESv2 and libdrm are byte-identical to the ones here and its libgallium differs only in the
+tree hash it embeds, so those stay. winewayland points Mesa at Zink
 (`MESA_LOADER_DRIVER_OVERRIDE=zink`, `WINE_USE_EGL=1`; NOT `LIBGL_ALWAYS_SOFTWARE`, which makes
 Zink demand a CPU Vulkan device) when these are present.
 
