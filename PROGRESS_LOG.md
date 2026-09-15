@@ -2,6 +2,100 @@
 
 Newest entry at the top.
 
+## 2026-09-14: the HDR10 EDID never reached DXGI — the virtual desktop's monitor had none (versionCode 11)
+
+**Bug (user's Galaxy Fold, not rooted, versionCode 10, AIO Graphics Test HDR + God of War):**
+`wine_debug.log` has the `winewayland: HDR10 monitor description (EDID) for Windows: max 1351
+(EDID 1345.4), max frame-average 1351 (EDID 1345.4), min 0.0005 (EDID 0.0008) nits` line, yet
+DXVK (2.4.1-gplasync and 3.1) logs `readMonitorEdidFromKey: Failed to get EDID reg key size` +
+`DXGI: Failed to parse display metadata + colorimetry info, using blank.` and
+`IDXGIOutput6::GetDesc1` returns the stand-ins 1499 / 799 / 0.01 nits with P3 primaries.
+
+### Root cause (source; the logs agree) — line numbers are the unfixed `sysparams.c` at `aa9b9c02372`
+- The session is a **Windows virtual desktop**: the session log says `Windows virtual desktop
+  created by explorer.exe`, `size 1280x960` (GoW: 1280x720), and wine_debug.log has
+  `winewayland: virtual desktop 0x10020 (0,0)-(1280,960) on the compositor`. So
+  `DF_WINE_VIRTUAL_DESKTOP` is set and win32u's virtual-desktop path runs.
+- `update_display_devices()` (`dlls/win32u/sysparams.c:2976-2988`, call at :2982): after the driver's
+  `UpdateDisplayDevices` it calls `add_virtual_source()` when `is_virtual_desktop()`.
+- `add_source()` (`sysparams.c:1965-1967`): "in virtual desktop mode, report all physical sources as
+  detached". winewayland's monitor, the one carrying the v10 EDID, sits on that detached source.
+- `add_virtual_source()` (`sysparams.c:2907`) builds the only active monitor from
+  `struct gdi_monitor monitor = {0};` (:2911) and calls `add_monitor( &monitor, ctx )` (:2966):
+  `edid_len` 0, so the path is `DISPLAY\Default_Monitor\0000&0000` (`add_monitor`,
+  `sysparams.c:2104-2107`) and
+  `write_monitor_to_registry` puts `BAD_EDID`, not `EDID`, in its `Device Parameters`
+  (`sysparams.c:2027-2030`).
+- `NtUserQueryDisplayConfig` returns only active monitors (`sysparams.c:3890`, `is_monitor_active`
+  is FALSE for a detached source). DXVK's `getMonitorDevicePath` uses `QDC_ONLY_ACTIVE_PATHS` +
+  `DISPLAYCONFIG_DEVICE_INFO_GET_TARGET_NAME` (`wsi_monitor_win32.cpp:226-285` at 2.4.1), finds
+  the interface `\\?\DISPLAY#Default_Monitor#0000&0000#{e6f07b5f-…}`, opens its `Device
+  Parameters` fine and finds no `EDID` value (`:288-291`), which is exactly the error on the Fold.
+- Ruled out: (a) the EDID is built in the process that writes the display cache (the one line
+  comes from explorer, right before its virtual-desktop line; other processes read the registry);
+  (b) stale registry from earlier sessions: `prepare_devices()` empties `Enum\DISPLAY` on every
+  forced update (`sysparams.c:927`, reached from `add_gpu`), so a prefix's old
+  `Default_Monitor`/`BAD_EDID` keys never survive into a session; (e) setupapi/DisplayConfig: the key opened, only the value was missing.
+- Why v10's off-device check passed: it proved the EDID bytes and the parsers, not win32u's
+  virtual-desktop path, which only runs with explorer's desktop.
+
+### Fix (`48fb81bc902`, `dlls/win32u/sysparams.c`)
+- `struct device_manager_ctx` gets `primary_edid` / `primary_edid_len` / `primary_monitor_path`.
+- `add_monitor()`: after the monitor is written, if the source is the primary one and nothing is
+  kept yet, keep a copy of its EDID for this update.
+- `add_virtual_source()`: `monitor.edid` / `edid_len` = that copy. The virtual monitor becomes
+  `DISPLAY\WAY0001\0000&0000` with `Device Parameters\EDID` (256 bytes); the physical one keeps
+  its EDID at `DISPLAY\WAY0001\0001&0000`. DisplayConfig's TARGET_NAME now says "Wayland" with
+  `edidIdsValid`, and the preferred mode is the one it already was (the EDID's DTD is the
+  output's current mode, which is also the largest virtual mode).
+- `release_display_manager_ctx()` frees the copy.
+- No EDID from the driver (every X11 session, and Wayland without the HDR variables) = nothing
+  changes. hdr_enabled is not carried (winewayland never sets it; Proton's winex11 does from
+  DXVK_HDR=1, so carrying it would change X11 virtual desktops - left out on purpose).
+
+### Diagnostics (MESSAGE level, reach wine_debug.log; only when the driver gave an EDID)
+- winewayland `report_edid_handoff()` (`display.c`), once per process and again if the size or
+  mode changes: `winewayland: explorer.exe (pid 00xx) built the screen's EDID for output <name>
+  (<width>x<height>) and hands win32u 256 bytes`.
+- win32u `report_monitor_edids()`, after `update_display_cache_from_registry()` in
+  `lock_display_devices()`, still under the display lock; one line per process, repeated only
+  when its text changes: `win32u: display update in explorer.exe (pid 00xx) on a virtual desktop:
+  the screen's EDID (256 bytes) is on DISPLAY\WAY0001\0001&0000; active monitor
+  DISPLAY\WAY0001\0000&0000: Device Parameters\EDID 256 bytes;` — the size is read back from the
+  registry. The broken case reads `active monitor DISPLAY\Default_Monitor\0000&0000: Device
+  Parameters\EDID MISSING, 0 bytes;`. explorer may print one earlier line without "on a virtual
+  desktop" (its first update can run before it switches to the new desktop).
+- Expected on the Fold with the fix: those lines, no `readMonitorEdidFromKey` / `using blank`
+  in the dxgi log, and GetDesc1 MaxLuminance = MaxFullFrameLuminance = 1345.43, MinLuminance
+  0.0008 (the app now sends 0.0005 nits → CTA min code; v10's harness shows DXVK passes it through),
+  primaries (0.6797, 0.3203) (0.2646, 0.6904) (0.1504, 0.0596).
+
+### Build
+- Branch `fix/wayland-hdr-edid-v11` off `fix/wayland-hdr-edid` (`aa9b9c02372`): `48fb81bc902`
+  win32u fix + both diagnostics, `e61db998c5d` ci versionCode 10 → 11 + the HDR sentence now names
+  the virtual desktop's monitor (both profiles). Syntax-checked (gcc; clang
+  `--target=aarch64-linux-android28`, `-Wall -Wextra`): no error or new warning in either file.
+- CI run 34925241464 (workflow_dispatch, headSha `e61db998c5d` verified), artifact
+  `proton-arm64ec-sdk28` → `proton-11.0-2-arm64ec.wcp`. **Green.** wcp sha256
+  `7f58c98d4482e54d6acbb588e65b93efade4a7cb3e152e19227dd2312620309e` (117,471,828 B), profile
+  `Proton 11.0-2.1-arm64ec` versionCode 11 with the reworded HDR sentence. Against the v10 wcp:
+  same file list; content differs only in `lib/wine/aarch64-unix/win32u.so` (carries
+  `win32u: display update in %s (pid %04x)%s: …` and ` active monitor %s: Device
+  Parameters\EDID %s%u bytes;`), `lib/wine/aarch64-unix/winewayland.so` (carries
+  `… built the screen's EDID for output %s (%dx%d) and hands win32u %u bytes`) and
+  `profile.json`; every PE ≤ 4 bytes and the import archives by timestamps only (same sizes).
+  libwayland, the Turnips and every other unix library are byte-identical to v10.
+- No release, tag or catalog change. No device test by this change's author (Fold = user; Pocket
+  FIT off-limits this round).
+
+### Carry into v8 (all seven parents)
+- Cherry-pick `48fb81bc902` together with v10's `612401793ce`: the EDID is useless without it on
+  any virtual-desktop session (every Bannerlator Wayland session). `dlls/win32u/sysparams.c` only
+  for the fix; the `display.c` hunk only adds the report and sits inside v10's hunk, so it goes
+  after `612401793ce`. The win32u part is driver-neutral and applies to the X11-only parents as
+  well; check `add_virtual_source()` still builds its monitor from a zeroed `gdi_monitor` there.
+- The CI commit `e61db998c5d` is NOT carried.
+
 ## 2026-09-14: HDR10 — the monitor's EDID for Windows (versionCode 10); VK_EXT_swapchain_colorspace was never hidden
 
 **Ask:** make HDR10 (already proven on the user's Galaxy Fold with DXVK v3.1 on versionCode 9)
@@ -95,6 +189,8 @@ syntax-check clean with gcc and with clang `--target=aarch64-linux-android28`, `
   (fast-forward once the Fold has spoken, as with versionCode 9).
 
 ### Carry into v8 (all seven parents)
+- **Superseded in part by versionCode 11:** on a virtual desktop (every Bannerlator Wayland
+  session) this commit alone never reaches DXGI; carry it together with `48fb81bc902`.
 - Cherry-pick `612401793ce` (`dlls/winewayland.drv/wayland_edid.c` + `wayland_edid.h` new,
   `display.c` hunk, one `Makefile.in` SOURCES line). `git merge-tree` against the parents as they
   are today: clean on proton_11.0, proton_11.0-2, proton_11.3-GE, proton_11.5-GE, proton_11.6-GE;
