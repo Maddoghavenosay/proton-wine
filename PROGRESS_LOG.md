@@ -2,6 +2,109 @@
 
 Newest entry at the top.
 
+## 2026-09-15: zero-copy game buffers become UBWC where gralloc allows it (versionCode 12)
+
+**Why (Wayland performance audit, 2026-09-15, Phase 1 fix 2):** every zero-copy swapchain came
+out linear. The zero-copy WSI asked gralloc for `GPU_SAMPLED_IMAGE | GPU_FRAMEBUFFER |
+COMPOSER_OVERLAY` and nothing else, and QTI gralloc compresses only when the producer sets its
+vendor bit `GRALLOC_USAGE_PRIVATE_ALLOC_UBWC` (= gralloc1 `PRODUCER_USAGE_PRIVATE_0` =
+`AHARDWAREBUFFER_USAGE_VENDOR_0`, bit 28) with a GPU usage and no CPU bit (`IsUBwcEnabled`, AOSP
+`hardware/qcom/sm8150/display` `gralloc/gr_utils.cpp:731-759`; msm8998 `gr_allocator.cpp:619-644`).
+Qualcomm's own driver hands the Android loader that bit (WinNative-Emu/Drivers
+`add_ubwc_swapchain_usage.py`, captured on an A840); Mesa never sets it. Logs: Pocket FIT
+`banner-ahb: 1280x720 swapchain (5 images) on gralloc buffers: linear`; Fold `… linear` after
+`gralloc handle layout unknown (2 fds, 34 ints)`. The copy path was already UBWC (the compositor
+advertises `qcom_compressed`), so zero-copy traded the copy for uncompressed game buffers.
+
+**Change (Banners-Turnip `wayland` `0121416`, `patches/wayland/banner_ahb_wsi.py`; no Wine source
+change):** a chain asks gralloc, in order,
+1. **UBWC**: `GPU_SAMPLED_IMAGE | GPU_FRAMEBUFFER | COMPOSER_OVERLAY | VENDOR_0` (usage
+   `0x10000b00`), only when the chain's `drm_mod_list` holds `QCOM_COMPRESSED`. That list is the
+   compositor's modifiers for the format, filtered by what the driver can create with this
+   swapchain's usage, flags, format list and compression control (`wsi_configure_native_image`;
+   Turnip's `tu_formats.cc:530-561` refuses QCOM_COMPRESSED for compression-disabled, incompatible
+   mutable lists and any usage `ubwc_possible()` rejects). So it means both "the compositor imports
+   UBWC for this format" (the app's `BANNER_WAYLAND_UBWC=0` takes it away) and "this image may be
+   UBWC". Never for storage swapchains or with `BANNER_WSI_AHB_LINEAR=1`.
+2. **plain**: the old request (gralloc's own choice, linear on QTI).
+3. **CPU-linear**: plain + `CPU_READ_RARELY`, which gralloc can never compress.
+A buffer is used only when its native handle is a QTI private handle (`'gmsm'` magic, flags next:
+`PRIV_FLAGS_UBWC_ALIGNED` = UBWC, no UBWC flag = linear; `PRIV_FLAGS_UBWC_ALIGNED_PI`, which a
+UBWC-PI buffer carries instead of UBWC_ALIGNED, counts as unreadable), `vkCreateImage` accepts
+gralloc's pitch with that modifier, and, for UBWC, gralloc's buffer (`lseek`) is at least the
+driver's UBWC image size (Turnip lays UBWC out itself from modifier + pitch, metadata first then
+pixels, `fd6_layout.c:380-392`, the gralloc sharing layout). Anything else moves on to the next
+request, so a wrong guess can only cost UBWC. An unreadable handle (no `'gmsm'`: newer grallocs,
+the Fold) skips request 2 and ends on 3, linear, exactly as before; its ints are printed once per
+request (`banner-ahb: unreadable gralloc handle from the UBWC request (2 fds, 34 ints); ints: …`)
+so a reader for that handle can be written from a real dump. Later images of a chain reuse its
+request; a UBWC buffer smaller than the image is refused rather than imported.
+
+**What wine_debug.log prints (once per swapchain):**
+- UBWC: `MESA: info: banner-ahb: 1280x720 swapchain (5 images) on gralloc buffers: UBWC (QCOM_COMPRESSED), stride 1280 px`
+- linear: `… on gralloc buffers: linear, stride 1280 px (no UBWC: <why>)`, `<why>` one or more of
+  `gralloc answered the UBWC request with a linear buffer` · `gralloc handle layout unknown (N fds,
+  M ints)` · `qcom_compressed is not among the compositor's modifiers for this format and usage` ·
+  `a storage swapchain` · `BANNER_WSI_AHB_LINEAR=1` · `gralloc refused the UBWC request` · `the
+  driver refused gralloc's UBWC layout (pitch P px, <VkResult>)` · `gralloc's UBWC buffer is X
+  bytes, the driver's UBWC image needs Y`.
+- The compositor's own line already names it: `layer zero-copy: AHB swapchain from <exe> (…,
+  UBWC (QCOM_COMPRESSED), stride … px)`.
+
+**Compositor (Bannerlator): no change needed.** `sc_layer_present_ahb` hands the AHB to
+SurfaceControl as is (SurfaceFlinger/HWC read gralloc's own metadata); `ahb_attach` only logs the
+modifier; no game AHB is ever CPU-locked. The copy-path fallback (window not a layer candidate)
+imports the same dma-buf into the compositor's Turnip with `QCOM_COMPRESSED` + gralloc's pitch,
+the pitch the game's Turnip already accepted; a refusal is logged as `dmabuf: vkCreateImage(
+qcom_compressed, …) -> …: the game's UBWC layout was refused` and the frame is then layer-only.
+
+**Verification off-device:** the patch applies to all six Mesa pins (plain `7cda7850`, a7xx
+`7631b525`, a8xx/a8xx-gen8 `12b7b819`, smxz `c501e1d1`, white `9c475fc3`, upstream `bbc7792f`);
+the helper block compiles cleanly with gcc and clang (host and aarch64-android29) against stub
+Mesa types; a mock-gralloc/mock-driver test of `banner_ahb_setup_chain` passes 10 scenarios
+(Pocket FIT UBWC, gralloc ignores the bit, Fold unreadable handle, no qcom_compressed, storage,
+driver refuses the UBWC pitch, UBWC buffer 4 KiB short, gralloc refuses the bit, UBWC_PI,
+BANNER_WSI_AHB_LINEAR=1), checking request, modifier, the explicit layout in the pNext chain and
+the log line.
+
+**Build:** Banners-Turnip run 34999563098 ✅ (headSha `0121416` verified; the patch applied in all
+seven trees; new string guard `gralloc answered the UBWC request with a linear buffer` passed for
+all eight drivers). Vendored here: the eight `libvulkan_freedreno_wayland*.so` only (SONAME/NEEDED
+and ICD manifests unchanged; that run's libEGL, libGLESv2 and libdrm are byte-identical to the
+vendored ones, its libgallium differs only in the embedded tree hash - kept). Commits `7f4f351d010`
+(wayland-deps + TURNIP.md), `9830f557ba6` (ci versionCode 11 -> 12, one sentence per profile).
+Layer run 35001539591 (dispatch on `feat/wayland-ubwc-v12`, headSha `9830f557ba6` verified):
+✅ green, artifact `proton-arm64ec-sdk28` -> `proton-11.0-2-arm64ec.wcp`, sha256
+`ef8df2d6b7083df24a9b9d65d3ffd3e29e28c31d8e945b12b4453d8d7545132e` (117,452,924 B), profile
+`Proton 11.0-2.1-arm64ec` versionCode 12 (installs as `Proton-11.0-2.1-arm64ec-12` next to -11).
+Against the v11 wcp (`7f58c98d…`): same 2,544 files; content differs only in the eight
+`lib/libvulkan_freedreno_wayland*.so` (each carries `gralloc answered the UBWC request with a linear
+buffer`, `on gralloc buffers: UBWC (QCOM_COMPRESSED)` and `unreadable gralloc handle from the %s
+request`) and `profile.json`; 1,502 PE files differ only in their COFF/export/debug timestamps and
+checksum (checked byte by byte), 22 import archives by timestamps (same sizes); every unix library
+(win32u, winewayland, libEGL, libgallium, libwayland …) is byte-identical to v11.
+No release, tag or catalog change; not staged anywhere.
+
+**Device status: not device-proven.** The Pocket FIT test (device agent) should see `UBWC
+(QCOM_COMPRESSED)` in both logs, a correct picture, and in `dumpsys SurfaceFlinger` the
+`banner_wayland_game` layer as a UBWC format with composition DEVICE (rotated). The Fold should be
+unchanged (linear, reason `gralloc handle layout unknown (2 fds, 34 ints)`) plus the two ints
+dumps. Not merged into `feat/winewayland-desktop-11.0-2` (fast-forward after the device test).
+The Fold's handle reader (WinNative's MIT `u_gralloc_aimapper.c`: IMapper5 via
+`android_load_sphal_library`, COMPRESSION / PLANE_LAYOUTS metadata, QTI's two-plane UBWC
+description collapsed to one QCOM_COMPRESSED plane) is NOT ported: it needs the SP-HAL mapper
+loadable from a Wine process (unverified linker namespace) and a Fold to prove it; the ints dump
+is the first step either way.
+
+### Carry into v8 (all seven parents)
+- The eight `android/wayland-deps/usr/lib/libvulkan_freedreno_wayland*.so` from Banners-Turnip
+  `wayland` at or after `0121416` (the patch is applied on every build there, so any later run
+  carries it; the v8 port vendors one run's full set as before).
+- `android/wayland-deps/TURNIP.md`: the "Since versionCode 12 those gralloc buffers can be
+  UBWC-compressed" paragraph and the Turnip provenance sentence (reword if v8 vendors one full run).
+- No Wine source change. The CI commit `9830f557ba6` (versionCode 11 -> 12, description
+  sentences) is NOT carried.
+
 ## 2026-09-14: the HDR10 EDID never reached DXGI — the virtual desktop's monitor had none (versionCode 11)
 
 **Bug (user's Galaxy Fold, not rooted, versionCode 10, AIO Graphics Test HDR + God of War):**
