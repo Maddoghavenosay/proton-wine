@@ -1090,6 +1090,12 @@ then
          enable_winedirectaudio_drv=${enable_winedirectaudio_drv:-yes}])
 fi
 
+dnl This tree's mmdevapi loads audio driver unixlibs directly and runs their main
+dnl loop / timer loop on system threads (main_loop_start/main_loop_stop, no
+dnl timer_loop slot). DirectAudio's call tables and timer thread follow that ABI
+dnl when this macro is set.
+AC_DEFINE(WINE_MMDEVAPI_SYSTEM_THREADS, 1, [DirectAudio: mmdevapi runs audio driver loops on system threads])
+
 enable_winecoreaudio_drv=${enable_winecoreaudio_drv:-no}
 enable_winedirectaudio_drv=${enable_winedirectaudio_drv:-no}
 enable_wineandroid_drv=${enable_wineandroid_drv:-no}

@@ -213,6 +213,16 @@ def main():
     report(b"BANNER_AUDIO_DIRECT_MIC" in da_so, "winedirectaudio.so: v1.3.2 (mic capture marker)")
     report(os.path.isfile(os.path.join(pe, "winedirectaudio.drv")), "winedirectaudio.drv (64-bit PE) present")
     report(os.path.isfile(os.path.join(pe32, "winedirectaudio.drv")), "winedirectaudio.drv (i386 PE) present")
+    # This base's mmdevapi (upstream "use a system thread for the audio driver main loop /
+    # timer loop") dropped main_loop/timer_loop from the driver ABI: the driver must be the
+    # WINE_MMDEVAPI_SYSTEM_THREADS build, which names its own timer thread.
+    report(u16("audio_client_timer") in da_so, "winedirectaudio.so: system-thread mmdevapi ABI (own timer thread)")
+
+    # 5b. Proton-CachyOS base markers.
+    print("-- Proton-CachyOS base")
+    report(b"(CachyOS)" in ntdll_so, "ntdll.so: CachyOS wine_build stamp")
+    report(u16("WINE_AUDIO_DRIVER") in read(os.path.join(pe, "mmdevapi.dll")),
+           "mmdevapi.dll: CachyOS mmdevapi (WINE_AUDIO_DRIVER, unixlib-direct driver loading)")
 
     # 6. GE-Proton game-fixes tier (only on GE layers).
     if a.ge:
