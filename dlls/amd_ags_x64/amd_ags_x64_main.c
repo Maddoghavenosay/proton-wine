@@ -234,6 +234,71 @@ static BOOL load_d3d11_functions(void)
     return TRUE;
 }
 
+/* ---------------------------------------------------------------------------------------------
+ * Device-readable diagnostics.
+ *
+ * This runs where Wine's stderr is discarded, so "the builtin never loaded", "it loaded and gave
+ * up early" and "it ran and found no HDR" are otherwise indistinguishable: all three look like
+ * silence. Every step therefore leaves a mark in HKEY_CURRENT_USER\Software\Wine\AmdAgs, i.e. the
+ * prefix's user.reg, starting at DLL attach - before anything that can fail.
+ *
+ * Stage is the furthest point reached. Everything else is written next to it as it is learned.
+ * The cost is a few registry writes per process, on the DLL-attach and agsInit paths only, in a
+ * process that uses AGS at all; nothing is written afterwards and nothing is ever read back.
+ * ------------------------------------------------------------------------------------------- */
+#define AGS_STAGE_ATTACH        1   /* DllMain ran: the builtin is loaded */
+#define AGS_STAGE_ENTRY         2   /* the app called an AGS init entry point */
+#define AGS_STAGE_VERSION       3   /* the AGS ABI version was settled */
+#define AGS_STAGE_VULKAN_CALL   4   /* about to ask Vulkan for the GPUs */
+#define AGS_STAGE_VULKAN_DONE   5   /* Vulkan answered */
+#define AGS_STAGE_DEVICES_DONE  6   /* devices and their displays were walked */
+#define AGS_STAGE_READY         7   /* the context was handed to the app */
+
+/* Which entry points the app actually used, so "loaded but the game went somewhere else" shows. */
+#define AGS_CALL_INIT           0x01
+#define AGS_CALL_INITIALIZE     0x02
+#define AGS_CALL_GET_GPU_INFO   0x04
+#define AGS_CALL_DX11_DEVICE    0x08
+#define AGS_CALL_DX12_DEVICE    0x10
+#define AGS_CALL_SET_DISPLAY    0x20
+#define AGS_CALL_DEINIT         0x40
+
+static unsigned int reported_calls;
+
+static void report_dword(const char *name, DWORD value)
+{
+    HKEY key;
+
+    if (RegCreateKeyExA(HKEY_CURRENT_USER, "Software\\Wine\\AmdAgs", 0, NULL, 0, KEY_SET_VALUE,
+                        NULL, &key, NULL))
+        return;
+    RegSetValueExA(key, name, 0, REG_DWORD, (const BYTE *)&value, sizeof(value));
+    RegCloseKey(key);
+}
+
+static void report_string(const char *name, const char *value)
+{
+    HKEY key;
+
+    if (!value) return;
+    if (RegCreateKeyExA(HKEY_CURRENT_USER, "Software\\Wine\\AmdAgs", 0, NULL, 0, KEY_SET_VALUE,
+                        NULL, &key, NULL))
+        return;
+    RegSetValueExA(key, name, 0, REG_SZ, (const BYTE *)value, strlen(value) + 1);
+    RegCloseKey(key);
+}
+
+static void report_stage(unsigned int stage)
+{
+    report_dword("Stage", stage);
+}
+
+static void report_call(unsigned int call)
+{
+    reported_calls |= call;
+    report_dword("Calls", reported_calls);
+}
+
 static AGSReturnCode vk_get_physical_device_properties(unsigned int *out_count,
         VkPhysicalDeviceProperties **out, VkPhysicalDeviceMemoryProperties **out_memory)
 {
@@ -243,7 +308,7 @@ static AGSReturnCode vk_get_physical_device_properties(unsigned int *out_count,
     VkInstance vk_instance = VK_NULL_HANDLE;
     VkInstanceCreateInfo create_info;
     AGSReturnCode ret = AGS_SUCCESS;
-    uint32_t count, i;
+    uint32_t count, raw_count, i;
     VkResult vr;
 
     *out = NULL;
@@ -251,17 +316,24 @@ static AGSReturnCode vk_get_physical_device_properties(unsigned int *out_count,
 
     memset(&create_info, 0, sizeof(create_info));
     create_info.sType = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO;
-    if ((vr = vkCreateInstance(&create_info, NULL, &vk_instance) < 0))
+    /* The parentheses here used to put the comparison inside the assignment, so vr was 0 or 1 and
+     * the warning never named the real VkResult. The control flow was right either way. */
+    if ((vr = vkCreateInstance(&create_info, NULL, &vk_instance)) < 0)
     {
         WARN("Failed to create Vulkan instance, vr %d.\n", vr);
+        report_dword("VkCreateInstance", vr);
         goto done;
     }
+    report_dword("VkCreateInstance", vr);
 
     if ((vr = vkEnumeratePhysicalDevices(vk_instance, &count, NULL)) < 0)
     {
         WARN("Failed to enumerate devices, vr %d.\n", vr);
+        report_dword("VkEnumerate", vr);
         goto done;
     }
+    report_dword("VkEnumerate", vr);
+    report_dword("VkDevicesRaw", count);
 
     if (!(vk_physical_devices = heap_calloc(count, sizeof(*vk_physical_devices))))
     {
@@ -291,6 +363,16 @@ static AGSReturnCode vk_get_physical_device_properties(unsigned int *out_count,
         goto done;
     }
 
+    raw_count = count;
+    if (raw_count)
+    {
+        VkPhysicalDeviceProperties first;
+
+        vkGetPhysicalDeviceProperties(vk_physical_devices[0], &first);
+        report_dword("VkDeviceType0", first.deviceType);
+        report_string("VkDeviceName0", first.deviceName);
+    }
+
     for (i = 0; i < count; ++i)
     {
         vkGetPhysicalDeviceProperties(vk_physical_devices[i], &properties[i]);
@@ -305,6 +387,23 @@ static AGSReturnCode vk_get_physical_device_properties(unsigned int *out_count,
         vkGetPhysicalDeviceMemoryProperties(vk_physical_devices[i], &memory_properties[i]);
     }
 
+    /* Keeping nothing is worse than keeping a GPU whose reported type we did not expect: a context
+     * with no device reports no display, and a game that asks AGS about its screen is then told
+     * there is none - no HDR, no refresh rate, nothing. Only the AMD-specific fields care about
+     * the type, and they are guarded separately, so fall back to whatever Vulkan listed. */
+    if (!count && raw_count)
+    {
+        WARN("No device of an expected type among %u, keeping all of them.\n", raw_count);
+        report_dword("VkTypeFilterBypassed", 1);
+        for (i = 0; i < raw_count; ++i)
+        {
+            vkGetPhysicalDeviceProperties(vk_physical_devices[i], &properties[i]);
+            vkGetPhysicalDeviceMemoryProperties(vk_physical_devices[i], &memory_properties[i]);
+        }
+        count = raw_count;
+    }
+
+    report_dword("VkDevicesKept", count);
     *out_count = count;
     *out = properties;
     *out_memory = memory_properties;
@@ -499,10 +598,9 @@ struct monitor_enum_context_600
     IDXGIFactory1 *dxgi_factory;
 };
 
-/* What this AGS context ended up telling the game about HDR. A game's own HDR option is often
- * decided here and nowhere else, and on a device where Wine's stderr is discarded there is no
- * other way to see which way it went, so the answer is also written to the registry - see
- * report_hdr_state(). Filled while the displays are enumerated, which happens once per context. */
+/* What this AGS context ended up telling the game about HDR, filled while the displays are
+ * enumerated. Vulkan's answer is kept too: a context with no device reports no display, and no
+ * display means no HDR, whatever the screen is actually doing. */
 static unsigned int reported_display_count;
 static unsigned int reported_hdr10;
 static unsigned int reported_max_nits;
@@ -823,12 +921,27 @@ static AGSReturnCode init_ags_context(AGSContext *context, int ags_version)
 
     memset(context, 0, sizeof(*context));
 
+    report_dword("VersionRequested", ags_version);
     context->version = determine_ags_version(&ags_version);
     context->public_version = ags_version;
+    report_stage(AGS_STAGE_VERSION);
+    report_dword("PublicVersion", ags_version);
+    report_dword("AgsVersionRow", context->version);
 
+    report_stage(AGS_STAGE_VULKAN_CALL);
     ret = vk_get_physical_device_properties(&context->device_count, &context->properties, &context->memory_properties);
+    report_stage(AGS_STAGE_VULKAN_DONE);
+    report_dword("Devices", context->device_count);
     if (ret != AGS_SUCCESS || !context->device_count)
+    {
+        /* This is the quiet failure: with no device there is no display either, so a game that
+         * asks AGS about its screen is told there is none, and greys out anything that depends on
+         * one. Say so here, because it used to return without leaving a mark at all. */
+        WARN("No usable device, ret %d, device_count %u.\n", ret, context->device_count);
+        report_hdr_state(context);
+        report_dword("Result", ret);
         return ret;
+    }
 
     assert(context->version < AMD_AGS_VERSION_COUNT);
 
@@ -837,6 +950,8 @@ static AGSReturnCode init_ags_context(AGSContext *context, int ags_version)
         WARN("Failed to allocate memory.\n");
         heap_free(context->properties);
         heap_free(context->memory_properties);
+        report_hdr_state(context);
+        report_dword("Result", AGS_OUT_OF_MEMORY);
         return AGS_OUT_OF_MEMORY;
     }
 
@@ -926,7 +1041,10 @@ static AGSReturnCode init_ags_context(AGSContext *context, int ags_version)
         device += amd_ags_info[context->version].device_size;
     }
 
+    report_stage(AGS_STAGE_DEVICES_DONE);
     report_hdr_state(context);
+    report_dword("Result", AGS_SUCCESS);
+    report_stage(AGS_STAGE_READY);
 
     return AGS_SUCCESS;
 }
@@ -937,6 +1055,10 @@ AGSReturnCode WINAPI agsInit(AGSContext **context, const AGSConfiguration *confi
     AGSReturnCode ret;
 
     TRACE("context %p, config %p, gpu_info %p.\n", context, config, gpu_info);
+
+    report_stage(AGS_STAGE_ENTRY);
+    report_call(AGS_CALL_INIT);
+    report_string("Entry", "agsInit");
 
     if (!context)
         return AGS_INVALID_ARGS;
@@ -1110,6 +1232,10 @@ AGSReturnCode WINAPI agsInitialize(int ags_version, const AGSConfiguration *conf
 
     TRACE("ags_verison %d, context %p, config %p, gpu_info %p.\n", ags_version, context, config, gpu_info);
 
+    report_stage(AGS_STAGE_ENTRY);
+    report_call(AGS_CALL_INITIALIZE);
+    report_string("Entry", "agsInitialize");
+
     if (!context)
         return AGS_INVALID_ARGS;
 
@@ -1145,6 +1271,8 @@ AGSReturnCode WINAPI agsGetGPUInfo(AGSContext* context, AGSGPUInfo_600 *gpu_info
 {
     TRACE("context %p, gpu_info %p.\n", context, gpu_info);
 
+    report_call(AGS_CALL_GET_GPU_INFO);
+
     if (!context || !gpu_info)
         return AGS_INVALID_ARGS;
 
@@ -1166,6 +1294,7 @@ AGSReturnCode WINAPI agsDeInitialize(AGSContext *context)
     unsigned int i;
     BYTE *device;
 
+    report_call(AGS_CALL_DEINIT);
     TRACE("context %p.\n", context);
 
     if (!context)
@@ -1302,6 +1431,7 @@ AGSReturnCode WINAPI agsSetDisplayMode(AGSContext *context, int device_index, in
     IDXGIFactory1 *dxgi_factory;
     HMODULE hdxgi;
 
+    report_call(AGS_CALL_SET_DISPLAY);
     TRACE("context %p device_index %d display_index %d settings %p\n", context, device_index,
           display_index, settings);
 
@@ -1401,6 +1531,7 @@ AGSReturnCode WINAPI agsDriverExtensionsDX11_CreateDevice( AGSContext* context,
     ID3D11Device *device;
     HRESULT hr;
 
+    report_call(AGS_CALL_DX11_DEVICE);
     TRACE("feature levels %u, pSwapChainDesc %p, app %s, engine %s %#x %#x.\n", creation_params->FeatureLevels,
             creation_params->pSwapChainDesc,
             debugstr_w(extension_params->agsDX11ExtensionParams511.pAppName),
@@ -1485,6 +1616,7 @@ AGSReturnCode WINAPI agsDriverExtensionsDX12_CreateDevice(AGSContext *context,
     unsigned int i;
     HRESULT hr;
 
+    report_call(AGS_CALL_DX12_DEVICE);
     TRACE("feature level %#x, app %s, engine %s %#x %#x, uavSlot %d.\n", creation_params->FeatureLevel,
             debugstr_w(extension_params->pAppName), debugstr_w(extension_params->pEngineName),
             extension_params->appVersion, extension_params->engineVersion,
@@ -1672,8 +1804,24 @@ BOOL WINAPI DllMain(HINSTANCE instance, DWORD reason, void *reserved)
     switch (reason)
     {
         case DLL_PROCESS_ATTACH:
+        {
+            char buffer[MAX_PATH], *name;
+
             DisableThreadLibraryCalls(instance);
+            /* The earliest mark there is: if this is missing from the prefix after a run, this
+             * builtin was never loaded and the process used an amd_ags_x64.dll of its own. Nothing
+             * above it can fail - the imports are already resolved by the time DllMain runs. */
+            report_stage(AGS_STAGE_ATTACH);
+            if (GetModuleFileNameA(NULL, buffer, sizeof(buffer)))
+            {
+                if (!(name = strrchr(buffer, '\\'))) name = buffer;
+                else ++name;
+                report_string("Process", name);
+            }
+            if (GetModuleFileNameA(instance, buffer, sizeof(buffer)))
+                report_string("Module", buffer);
             break;
+        }
     }
 
     return TRUE;
