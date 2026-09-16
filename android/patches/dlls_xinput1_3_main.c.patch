@@ -1,8 +1,8 @@
 diff --git a/dlls/xinput1_3/main.c b/dlls/xinput1_3/main.c
-index 254bac01bf5..416b0b7dd0f 100644
+index 2967b8b6c17..82a9cc0219f 100644
 --- a/dlls/xinput1_3/main.c
 +++ b/dlls/xinput1_3/main.c
-@@ -673,11 +673,31 @@ static LRESULT CALLBACK xinput_devnotify_wndproc(HWND hwnd, UINT msg, WPARAM wpa
+@@ -686,11 +686,31 @@ static LRESULT CALLBACK xinput_devnotify_wndproc(HWND hwnd, UINT msg, WPARAM wpa
      return DefWindowProcW(hwnd, msg, wparam, lparam);
  }
  
@@ -35,8 +35,8 @@ index 254bac01bf5..416b0b7dd0f 100644
      DEV_BROADCAST_DEVICEINTERFACE_W filter =
      {
          .dbcc_size = sizeof(DEV_BROADCAST_DEVICEINTERFACE_W),
-@@ -727,7 +747,7 @@ static DWORD WINAPI hid_update_thread_proc(void *param)
-         events[count++] = update_event;
+@@ -738,7 +758,7 @@ static DWORD WINAPI hid_update_thread_proc(void *param)
+         LeaveCriticalSection(&xinput_cs);
      }
      while ((ret = MsgWaitForMultipleObjectsEx(count, events, 2000, QS_ALLINPUT, MWMO_ALERTABLE)) <= count ||
 -            ret == WAIT_TIMEOUT);
