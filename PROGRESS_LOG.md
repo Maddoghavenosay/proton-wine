@@ -2,6 +2,97 @@
 
 Newest entry at the top.
 
+## 2026-09-16: the builtin AGS was unreachable, and why — the copy beside the .exe always won (versionCode 16)
+
+**Device results of versionCode 15 (user, container 7, RE3):**
+1. Game's `amd_ags_x64.dll` moved aside, `WINEDLLOVERRIDES=amd_ags_x64=b,n`: **RE3 did not start.**
+   The Wayland log shows explorer.exe and tabtip.exe connecting and then nothing.
+2. Layer's own `lib/wine/aarch64-windows/amd_ags_x64.dll` (524,288 B) copied into the game folder
+   with `=n`: **also did not start.**
+3. `Software\Wine\AmdAgs` never appeared, in any run, running or after `wineserver` exited.
+4. Original 42,496-byte DLL restored, override cleared: RE3 launches and presents again.
+
+### All three are now explained, and none of them the way the last round guessed
+**The prefix's `C:\windows\system32` holds the real builtin PEs, not fake DLLs — and the copy list
+does not include this module.** Measured against the installed layer's `lib/wine/aarch64-windows`:
+
+| module | layer | prefix system32 | stamped |
+| --- | --- | --- | --- |
+| `atiadlxx.dll` | 851,968 | 851,968 | 2026-09-15 22:53 |
+| `version.dll` | 589,824 | 589,824 | 22:53 |
+| `xinput1_3.dll` | 589,824 | 589,824 | 22:53 |
+| `winmm.dll` | 917,504 | 917,504 | 22:53 |
+| `opengl32.dll` | 2,293,760 | 2,293,760 | 22:53 |
+| `user32.dll` | 2,949,120 | 2,949,120 | 22:53 |
+| **`amd_ags_x64.dll`** | **524,288** | **MISSING** | — |
+
+Every one was restamped when the container moved to this layer, so the copy happens on layer
+switch and works — from a **fixed list** that predates the module existing. So the only copy of
+`amd_ags_x64.dll` the loader can ever see is the one `re3.exe` ships.
+
+- **Why the default run never used the builtin.** That shipped copy is a plain x64 PE, so
+  `load_builtin()` starts from its machine and `find_builtin_dll()` searches
+  `get_pe_dir(IMAGE_FILE_MACHINE_AMD64)` = `/x86_64-windows` — a directory an arm64ec build does
+  not have (the wcp has `aarch64-unix`, `aarch64-windows`, `i386-windows` and nothing else). Miss →
+  `STATUS_IMAGE_ALREADY_LOADED` → the game's copy is used. Every time, whatever the load order.
+- **Why test 1 failed, and why the versionCode 15 change was never reached.**
+  `find_builtin_without_file()` returns `STATUS_DLL_NOT_FOUND` immediately unless the prefix is
+  bootstrapping or the module is a 16-bit one — `dlls/ntdll/loader.c:3285`. **The v14/v15 notes
+  claimed this path would find the builtin when no file was present; that was wrong.** With
+  nothing in the app directory and nothing in system32 the import simply fails and the process
+  never starts. `load_builtin()` only runs on a file that was found and mapped, so the v15 change
+  was not exercised at all by that test.
+- **Why test 2 failed, for a third and unrelated reason.** `load_builtin()` refuses a
+  `wine_builtin` image under `LO_NATIVE` outright — `dlls/ntdll/unix/loader.c:1756`,
+  `if (image_info->wine_builtin) { if (loadorder == LO_NATIVE) return STATUS_DLL_NOT_FOUND; … }`.
+  Forcing `native` on a Wine builtin is the one combination Wine rejects. The very same copy under
+  the default order, or `=b,n`, would have been found: its own machine is ARM64, so the search
+  would have gone to `aarch64-windows`. Test 2 was one character from working.
+
+**Mapping was never the problem.** `map_image_into_view()` switches an ARM64 image to its x64 view
+through `update_arm64x_mapping()` when the caller asks for AMD64
+(`dlls/ntdll/unix/virtual.c:3431-3441`), so the arm64ec builtin loads into an x64 process normally.
+The built PE is also structurally identical to every other builtin in the layer — machine ARM64
+with `.hexpthk` and `.a64xrm` sections, exactly like `user32.dll`, `atiadlxx.dll` and `vulkan-1.dll`
+— and its imports (advapi32, kernel32, ntdll, ucrtbase, user32, version, vulkan-1) are all present.
+
+### Fix (`8af606a1f66`, `dlls/ntdll/unix/loader.c`)
+On arm64ec the builtin search follows the current machine for a **named short list** of modules
+whose shipped copy cannot work here at all — `arm64ec_builtin_must_win()`, currently just
+`amd_ags_x64.dll`. A game's AGS reaches the AMD driver through ADL2/atiadlxx and imports nothing
+from DXGI, so on a non-AMD GPU it reports no display whatsoever, and a title that asks AGS about
+its screen is told there is none. That is how the HDR option ends up greyed out with no way to
+turn it on. **This is not new behaviour — it is what x86_64 Proton already does**, where
+`/x86_64-windows` exists and the builtin is found with none of this. A named case in this file has
+precedent: `get_load_order()` already special-cases `easyanticheat*`.
+
+The default order is untouched for everything else, for the reason that still stands: `dxgi`,
+`d3d9`, `d3d11`, `d3d12`, `opengl32`, `winmm`, `version`, `dsound` and `xinput1_3/1_4` have no
+`--prefer-native` in this tree, and a ReShade proxy is usually one of those. The container's own
+`DllOverrides` covers `dxgi`/`d3d9`/`d3d11` but not `opengl32` or `winmm`.
+
+Rollback for a title that regresses: set the `amd_ags_x64` DLL override to **native**, which
+returns above all of this.
+
+### What versionCode 15's Stage marks should now say
+They were never reached before, because the builtin never loaded. With the lookup fixed the first
+run should show `Stage` 7 with `Adapter` = the Vulkan device name, `Displays` ≥ 1,
+`ColorSpace` 12 and `HDR10` 1. Anything short of that now points at a specific step rather than at
+silence — the versionCode 15 table still applies.
+
+**Device status: not device-proven.** No release, tag, catalog change or staging.
+
+### Also worth fixing outside the layer
+`amd_ags_x64.dll` belongs in the app's system32 copy list. With it there, a container gets the
+builtin the ordinary way and "move the game's copy aside" becomes a working workaround instead of
+a failure to launch. That is a Bannerlator change, not a layer one, and it is worth doing anyway:
+this loader entry is a per-module list, and the copy list is the general answer.
+
+### Carry into v8
+`8af606a1f66` replaces versionCode 15's `235b0fc17a0` hunk in the same place; carry the later one.
+It is arm64ec-only by construction and inert on any parent that is not an arm64ec build. Do not
+widen it to the default load order while carrying. The CI commit is not carried.
+
 ## 2026-09-16: say why the HDR option is greyed out, instead of leaving silence (versionCode 15)
 
 **Device result of versionCode 14 (user, Pocket FIT, container 7, RE3, HDR10 external screen):**
