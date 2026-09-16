@@ -5,11 +5,13 @@
 #include <stdarg.h>
 #include <stdbool.h>
 #include <assert.h>
+#include <string.h>
 
 #include "ntstatus.h"
 #define WIN32_NO_STATUS
 #include "windef.h"
 #include "winbase.h"
+#include "winreg.h"
 #include "winternl.h"
 #include "wine/debug.h"
 
@@ -497,6 +499,15 @@ struct monitor_enum_context_600
     IDXGIFactory1 *dxgi_factory;
 };
 
+/* What this AGS context ended up telling the game about HDR. A game's own HDR option is often
+ * decided here and nowhere else, and on a device where Wine's stderr is discarded there is no
+ * other way to see which way it went, so the answer is also written to the registry - see
+ * report_hdr_state(). Filled while the displays are enumerated, which happens once per context. */
+static unsigned int reported_display_count;
+static unsigned int reported_hdr10;
+static unsigned int reported_max_nits;
+static int reported_color_space = -1;
+
 static void create_dxgi_factory(HMODULE *hdxgi, IDXGIFactory1 **factory)
 {
     typeof(CreateDXGIFactory1) *pCreateDXGIFactory1;
@@ -558,11 +569,14 @@ static void fill_chroma_info(AGSDisplayInfo_600 *info, struct monitor_enum_conte
             found = TRUE;
 
             TRACE("output_desc.ColorSpace %#x.\n", output_desc.ColorSpace);
+            reported_color_space = output_desc.ColorSpace;
             if (output_desc.ColorSpace == DXGI_COLOR_SPACE_RGB_FULL_G2084_NONE_P2020)
             {
                 TRACE("Reporting monitor %s as HDR10 supported.\n", debugstr_a(info->displayDeviceName));
                 info->HDR10 = 1;
+                reported_hdr10 = 1;
             }
+            reported_max_nits = (unsigned int)output_desc.MaxLuminance;
 
             info->chromaticityRedX = output_desc.RedPrimary[0];
             info->chromaticityRedY = output_desc.RedPrimary[1];
@@ -680,6 +694,7 @@ static BOOL WINAPI monitor_enum_proc_600(HMONITOR hmonitor, HDC hdc, RECT *rect,
         fill_chroma_info(info, c, hmonitor);
 
         ++*c->ret_display_count;
+        ++reported_display_count;
 
         TRACE("Added display %s for %s.\n", debugstr_a(monitor_info.szDevice), debugstr_a(c->adapter_name));
     }
@@ -738,6 +753,66 @@ static int hide_apu(void)
             FIXME("hack: hiding APU.\n");
     }
     return cached;
+}
+
+/* Record what this process's AGS context decided, somewhere it can be read back on a device whose
+ * Wine stderr goes nowhere: HKEY_CURRENT_USER\Software\Wine\AmdAgs, i.e. the prefix's user.reg.
+ *
+ * Written once, from the cold agsInit/agsInitialize path, so a game pays for one key and a handful
+ * of values while it starts and nothing at all afterwards. The key being absent is itself the
+ * answer to the first question worth asking - this builtin never ran, and the process loaded an
+ * amd_ags_x64.dll of its own instead.
+ *
+ *   Process       which .exe wrote this
+ *   Adapter       the Vulkan device name displays are matched against: EnumDisplayDevices'
+ *                 DeviceString must equal it or no display is reported at all
+ *   Displays      how many were reported. 0 means that match failed and nothing below means much
+ *   ColorSpace    DXGI_OUTPUT_DESC1.ColorSpace from IDXGIOutput6::GetDesc1, or -1 when no DXGI
+ *                 output matched the monitor. 12 is DXGI_COLOR_SPACE_RGB_FULL_G2084_NONE_P2020
+ *   HDR10         what the game is told: 1 iff ColorSpace was that one
+ *   MaxLuminance  the screen's peak in nits as DXGI reported it, i.e. out of our EDID
+ */
+static void report_hdr_state(const struct AGSContext *context)
+{
+    char buffer[MAX_PATH], *name;
+    DWORD value;
+    HKEY key;
+
+    if (RegCreateKeyExA(HKEY_CURRENT_USER, "Software\\Wine\\AmdAgs", 0, NULL, 0, KEY_SET_VALUE,
+                        NULL, &key, NULL))
+        return;
+
+    name = NULL;
+    if (GetModuleFileNameA(NULL, buffer, sizeof(buffer)))
+    {
+        if (!(name = strrchr(buffer, '\\')))
+            name = buffer;
+        else
+            ++name;
+        RegSetValueExA(key, "Process", 0, REG_SZ, (const BYTE *)name, strlen(name) + 1);
+    }
+    if (context->device_count && context->properties)
+        RegSetValueExA(key, "Adapter", 0, REG_SZ, (const BYTE *)context->properties[0].deviceName,
+                       strlen(context->properties[0].deviceName) + 1);
+
+    value = context->public_version;
+    RegSetValueExA(key, "PublicVersion", 0, REG_DWORD, (const BYTE *)&value, sizeof(value));
+    value = context->device_count;
+    RegSetValueExA(key, "Devices", 0, REG_DWORD, (const BYTE *)&value, sizeof(value));
+    value = reported_display_count;
+    RegSetValueExA(key, "Displays", 0, REG_DWORD, (const BYTE *)&value, sizeof(value));
+    value = reported_color_space;
+    RegSetValueExA(key, "ColorSpace", 0, REG_DWORD, (const BYTE *)&value, sizeof(value));
+    value = reported_hdr10;
+    RegSetValueExA(key, "HDR10", 0, REG_DWORD, (const BYTE *)&value, sizeof(value));
+    value = reported_max_nits;
+    RegSetValueExA(key, "MaxLuminance", 0, REG_DWORD, (const BYTE *)&value, sizeof(value));
+    RegCloseKey(key);
+
+    MESSAGE("amd_ags_x64: %s asked AGS about %u display(s) on %s; DXGI colour space %d, "
+            "HDR10 %u, peak %u nits\n", name ? name : "?", reported_display_count,
+            context->device_count && context->properties ? context->properties[0].deviceName : "?",
+            reported_color_space, reported_hdr10, reported_max_nits);
 }
 
 static AGSReturnCode init_ags_context(AGSContext *context, int ags_version)
@@ -850,6 +925,8 @@ static AGSReturnCode init_ags_context(AGSContext *context, int ags_version)
 
         device += amd_ags_info[context->version].device_size;
     }
+
+    report_hdr_state(context);
 
     return AGS_SUCCESS;
 }
