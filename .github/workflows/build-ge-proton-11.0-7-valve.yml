@@ -1,5 +1,5 @@
-name: GE-Proton 11.0-7 new-base (bionic layer, experimental)
-run-name: "GE-Proton 11.0-7 new-base — ${{ github.ref_name }} (${{ github.event_name }})"
+name: GE-Proton 11.0-7.1 (bionic layer, new Valve base)
+run-name: "GE-Proton 11.0-7.1 — ${{ github.ref_name }} (${{ github.event_name }})"
 
 # EXPERIMENTAL layer: GE-Proton11-7's own Wine base, ValveSoftware/wine 46b29104
 # (bleeding-edge, 2026-09-15), merged onto our proton_11.0-2 layer (Valve dc26e618 +
@@ -26,7 +26,7 @@ on:
   push:
     # Self-builds on push to its own branch only: GitHub registers workflow_dispatch
     # only for workflows on the default branch, so a bare dispatch 404s here.
-    branches: [ 'wip/proton_11.7-GE-valve' ]
+    branches: [ proton_11.7.1-GE, 'staging/proton_11.7.1-GE/**' ]
   workflow_dispatch:
 
 jobs:
