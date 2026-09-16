@@ -99,6 +99,66 @@ display data comes from ADL2/`atiadlxx`. On a Turnip/Adreno device that finds no
   do with colour, and RE3 discards those too.
 - `b62aba315a1` ci versionCode 13 → 14 + one sentence per profile.
 
+**Build.** CI run 35045330344 (workflow_dispatch on `feat/wayland-hdr-ags-v14`, headSha
+`b62aba315a1e5d241d18c0d75a5f39ceb8fc5d01` verified): ✅ green, artifact `proton-arm64ec-sdk28` →
+`proton-11.0-2-arm64ec.wcp`, sha256
+`bd55b618140625a2520936da97741e5614c46d1fecb8a62f98c1f49a5269de26` (117,539,686 B, +86,194 B on
+v13), profile `Proton 11.0-2.1-arm64ec` versionCode 14 → installs as
+`Proton-11.0-2.1-arm64ec-14` next to -13. The install step's own check printed
+`amd_ags_x64.dll present: …/lib/wine/aarch64-windows/amd_ags_x64.dll`.
+Against the installed v13 layer the file list gains exactly five files and loses none:
+`lib/wine/aarch64-windows/amd_ags_x64.dll` (524,288 B), `lib/wine/i386-windows/amd_ags_x64.dll`
+(61,440 B), `lib/wine/aarch64-unix/amd_ags_x64.so` (3,664 B) and the two `libamd_ags_x64.a` import
+libs. On-artifact markers: `Software\Wine\AmdAgs` plus `Process`/`Adapter`/`Displays`/`ColorSpace`/
+`HDR10`/`MaxLuminance` and `amd_ags_x64: %s asked AGS about %u display(s) on %s; …` in
+`amd_ags_x64.dll`; `DISPLAYCONFIG_DEVICE_INFO_GET_SDR_WHITE_LEVEL.`,
+`DISPLAYCONFIG_DEVICE_INFO_SET_ADVANCED_COLOR_STATE.` and `Cannot turn advanced colour %s for
+monitor %s.` in `win32u.so`; v13's `DXVK_HDR` still 3× in `winewayland.so`.
+No release, tag, catalog change or staging. Stacked on `feat/wayland-hdr-advanced-color-v13`, which
+is stacked on `feat/wayland-ubwc-v12`; fast-forward the chain once the device test has spoken.
+
+### Proof the gate really is AGS (static, from the installed binaries)
+`re3.exe` calls `agsInitialize(0x1800001 /* AGS 6.0.1 */, NULL, &ctx, &gpu_info)` at
+`.text:0x142fa9560` and returns failure from its whole display-capability routine if that is not
+`AGS_SUCCESS` (`test eax,eax; je …; xor al,al; jmp`). It then walks `gpu_info.numDevices` (+0x10)
+and `gpu_info.devices` (+0x18) with device stride **0x78**, per device `numDisplays` (+0x48) and
+`displays` (+0x50) with display stride **0x1d8**, matches a display by byte-comparing its own
+display name against **+0x100** (`displayDeviceName`), and then:
+
+```
+000142fa94bf  41f6822001000012   test byte ptr [r10 + 0x120], 0x12
+000142fa94c7  7522               jne  0x142fa94eb        ; found an HDR display
+...
+000142fa94f4  d1e8               shr  eax, 1             ; HDR10          -> its record +8
+000142fa94f8  c1e904             shr  ecx, 4             ; freesyncHDR    -> its record +9
+```
+
+`0x12` is bit 1 | bit 4 = `AGSDisplayInfo::HDR10 | freesyncHDR`. With no display setting either
+bit it keeps the values pre-set at function entry — index `0xffffffffffffffff`, both flags 0 — i.e.
+"no HDR display", which is the greyed-out option. Wine's structs are byte-identical to what it
+reads: `AGSDisplayInfo_600` is `name[256]` + `displayDeviceName[32]`, so its flags dword is at
+0x120 with HDR10 = bit 1 and freesyncHDR = bit 4, and `sizeof(AGSDeviceInfo_600)` is 0x78 with
+`numDisplays` at 0x48 and `displays` at 0x50. `amd_ags_info[]` maps 6.0.0–6.0.1 to
+`AMD_AGS_VERSION_6_0_0`/`sizeof(AGSDeviceInfo_600)`, and `determine_ags_version()` returns
+`get_version_number(*ags_version)` directly when the app names a version, so 0x1800001 selects
+exactly that row and `init_device_displays_600()`. `re3.exe` also imports and calls
+`agsSetDisplayMode` (`.text:0x142fa9ff5`), which the builtin implements
+(`Mode_600_HDR10_PQ` → `DXGI_COLOR_SPACE_RGB_FULL_G2084_NONE_P2020`, `:1190`).
+
+The display walk matches on `strcmp(EnumDisplayDevices DeviceString, vk_properties->deviceName)`
+(`:615`), and both sides are the Vulkan GPU name here — `re3_config.ini` recorded
+`[Render/Adapter] Description=Turnip Adreno (TM) 750` and `[Render/Display]
+DisplayName=\\.\DISPLAY1`, which is the virtual source (source id 0), the one carrying the HDR
+monitor. The DXVK GPU spoof (`gpuName=NVIDIA GeForce GTX 480`) only rewrites DXGI's adapter
+description, not Vulkan's, so it does not break that match.
+
+**Risk.** `agsDriverExtensionsDX12_CreateDevice` in the builtin just forwards to
+`D3D12CreateDevice` and reports whatever `ID3D12DeviceExt3` says; its deliberate AGS_DX_FAILURE
+hack is gated on `SteamGameId == "3321460"` (`:…+41`), and RE3 is 952060, so it never fires.
+`agsDriverExtensionsDX11_CreateDevice` likewise just forwards. Rollback if an AGS title regresses:
+`WINEDLLOVERRIDES=amd_ags_x64=n` (native) or `=amd_ags_x64=` (disabled) in the shortcut's
+`envVars`; `=b` forces the builtin.
+
 **Load order.** `dlls/amd_ags_x64/Makefile.in` has no `--prefer-native`, so the builtin does not
 carry `IMAGE_DLLCHARACTERISTICS_PREFER_NATIVE`, which is the only thing `prefer_native` is checked
 against (`dlls/ntdll/unix/loader.c:1039`, reached from `load_builtin()`'s `LO_DEFAULT` arm at
