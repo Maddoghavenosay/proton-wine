@@ -1764,8 +1764,22 @@ NTSTATUS load_builtin( const struct pe_image_info *image_info, UNICODE_STRING *n
         loadorder = LO_BUILTIN;  /* builtin with no fallback since mapping a fake dll is not useful */
     }
 
-    if (is_arm64ec() && image_info->is_hybrid && search_machine == IMAGE_FILE_MACHINE_AMD64)
-        search_machine = current_machine;
+    if (is_arm64ec() && search_machine == IMAGE_FILE_MACHINE_AMD64)
+    {
+        /* An arm64ec build has no x86_64-windows directory at all: every builtin lives in the
+         * arm64ec one, including the modules that are themselves x64 code. So when the file we
+         * found is a plain x64 PE - which is what a game ships next to its .exe - this lookup goes
+         * to a directory that does not exist and no builtin can ever replace it. The very same
+         * builtin loads fine when no file is found anywhere, because find_builtin_without_file()
+         * uses the current machine's directory instead; the two paths simply disagree.
+         *
+         * Follow the current machine for a hybrid image as before, and also whenever the load
+         * order names the builtin explicitly, so that an override can at least be honoured. The
+         * default order is deliberately left alone: redirecting that would let builtins start
+         * shadowing every x64 dxgi/opengl32/winmm/xinput wrapper that ships beside a game. */
+        if (image_info->is_hybrid || loadorder == LO_BUILTIN || loadorder == LO_BUILTIN_NATIVE)
+            search_machine = current_machine;
+    }
 
     switch (loadorder)
     {
