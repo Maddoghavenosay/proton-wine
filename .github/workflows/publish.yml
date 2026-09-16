@@ -1,0 +1,50 @@
+name: Publish to the Proton-CachyOS 11.0-20260703 test pre-release
+
+# Server-side: attaches CI-built layers to the test pre-release and refreshes its
+# notes. Each file is taken from its CI run artifact and only attached if its sha256 and profile
+# versionName match assets.txt. Files already on the release are never replaced.
+on:
+  push:
+    branches: [publish/cachyos-test]
+
+permissions:
+  contents: write
+  actions: read
+
+jobs:
+  publish:
+    runs-on: ubuntu-24.04
+    env:
+      GH_TOKEN: ${{ github.token }}
+      REPO: ${{ github.repository }}
+      TAG: build-proton-cachyos-11.0-20260703-test-20260916
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Fetch and verify the layers
+        run: |
+          set -euo pipefail
+          mkdir -p out
+          grep -v '^#' assets.txt | grep -v '^\s*$' | while IFS='|' read -r run artifact file sha vname; do
+            echo "== $file (run $run, artifact $artifact)"
+            rm -rf dl && mkdir dl
+            gh run download "$run" -R "$REPO" -n "$artifact" -D dl
+            test -f "dl/$file"
+            echo "$sha  dl/$file" | sha256sum -c -
+            got=$(tar -I zstd -xOf "dl/$file" profile.json | python3 -c 'import json,sys; p=json.load(sys.stdin); print(p["versionName"])')
+            [ "$got" = "$vname" ] || { echo "FATAL: versionName $got != $vname"; exit 1; }
+            echo "   versionName $got ok, $(stat -c %s "dl/$file") bytes"
+            mv "dl/$file" out/
+          done
+          ls -l out
+
+      - name: Attach and update notes
+        run: |
+          set -euo pipefail
+          have=$(gh release view "$TAG" -R "$REPO" --json assets --jq '.assets[].name')
+          for f in out/*.wcp; do
+            n=$(basename "$f")
+            if echo "$have" | grep -qx "$n"; then echo "$n already attached, leaving it"; else gh release upload "$TAG" -R "$REPO" "$f"; fi
+          done
+          gh release edit "$TAG" -R "$REPO" --notes-file body.md --title "Proton-CachyOS 11.0-20260703 test layers — arm64ec + x86_64 bionic"
+          gh release view "$TAG" -R "$REPO" --json isPrerelease,assets --jq '"prerelease=\(.isPrerelease)", (.assets[] | "\(.name) \(.size) \(.digest)")'
