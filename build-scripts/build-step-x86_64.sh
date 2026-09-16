@@ -154,6 +154,7 @@ do
       --without-piper \
       --with-pthread \
       --with-pulse \
+      --without-pipewire \
       --without-sane \
       --with-sdl \
       --without-udev \
@@ -214,14 +215,12 @@ do
       # Android bionic locale bring-up: force LC_ALL=C.UTF-8 before locale init
       # (bionic ships no locale data beyond C/C.UTF-8).
       "dlls_ntdll_unix_env.c.patch"
-	  "dlls_ntdll_unix_signal_x86_64.c.patch"
 
-      # unixlib load-by-name (MemoryWineLoadUnixLibByName) — defining patches
-      # required because the shared loader.c/virtual.c patches reference them
-      "dlls_ntdll_unix_unix_private.h.patch"
-      "dlls_wow64_virtual.c.patch"
-      "include_wine_unixlib.h.patch"
-      "include_winternl.h.patch"
+      # unixlib load-by-name (MemoryWineLoadUnixLibByName, used by the FEX companion
+      # unixlib) and the dump_syscall_fault_return `jmp *%rcx` fix are already in the
+      # Proton-CachyOS tree (upstream Wine, same enum values 1002-1004), so their
+      # patches (unix_private.h, wow64 virtual.c, wine/unixlib.h, winternl.h,
+      # signal_x86_64.c) are gone; loader.c/virtual.c keep only the Android parts.
 	  
 	  # opengl32
 	  "dlls_opengl32_unix_wgl.c.patch"
@@ -317,6 +316,9 @@ do
       "dlls/ntdll/unix/env.c|C.UTF-8|LC_ALL=C.UTF-8 bionic locale bring-up"
       "dlls/winedirectaudio.drv/directaudio.c|BANNER_AUDIO_DIRECT_MIC|DirectAudio driver is the v1.3.2 build (mic capture)"
       "dlls/xinput1_3/main.c|transient wait failure in the update thread|xinput WAIT_FAILED retry (controller-dies fix)"
+      "dlls/winepulse.drv/pulse.c|Failed to create timer event, timer callbacks disabled|winepulse rttime_new guard (re-ported onto the CachyOS pulse main loop)"
+      "include/config.h|#define WINE_MMDEVAPI_SYSTEM_THREADS 1|DirectAudio built for the system-thread mmdevapi ABI (CachyOS/upstream mmdevapi)"
+      "dlls/winedirectaudio.drv/directaudio.c|static void unix_timer_loop(void *args);|DirectAudio driver carries the system-thread mmdevapi ABI port"
       "dlls/ws2_32/unixlib.c|EMULATE_V4MAPPED|ws2_32 AI_V4MAPPED emulation (EA DirtySDK DNS)"
       "dlls/nsiproxy.sys/ip.c|WINE_ANDROID_GATEWAY|nsiproxy default-route fix (EA offline latch)"
       "dlls/dnsapi/libresolv.c|LIBANDROID_HANDLE|dnsapi Android resolver"
