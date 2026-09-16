@@ -28,6 +28,7 @@ AC_ARG_ENABLE(werror, AS_HELP_STRING([--enable-werror],[treat compilation warnin
 
 AC_ARG_WITH(alsa,      AS_HELP_STRING([--without-alsa],[do not use the Alsa sound support]))
 AC_ARG_WITH(capi,      AS_HELP_STRING([--without-capi],[do not use CAPI (ISDN support)]))
+AC_ARG_WITH(aaudio,    AS_HELP_STRING([--without-aaudio],[do not use the Android AAudio sound support]))
 AC_ARG_WITH(coreaudio, AS_HELP_STRING([--without-coreaudio],[do not use the CoreAudio sound support]))
 AC_ARG_WITH(cups,      AS_HELP_STRING([--without-cups],[do not use CUPS]))
 AC_ARG_WITH(dbus,      AS_HELP_STRING([--without-dbus],[do not use DBus (dynamic device support)]))
@@ -1081,7 +1082,16 @@ case $host_os in
     ;;
 esac
 
+dnl **** Check for AAudio (Android native audio) for the DirectAudio driver ****
+if test "x$with_aaudio" != "xno"
+then
+    AC_CHECK_HEADER([aaudio/AAudio.h],
+        [AC_SUBST(AAUDIO_LIBS,"-laaudio")
+         enable_winedirectaudio_drv=${enable_winedirectaudio_drv:-yes}])
+fi
+
 enable_winecoreaudio_drv=${enable_winecoreaudio_drv:-no}
+enable_winedirectaudio_drv=${enable_winedirectaudio_drv:-no}
 enable_wineandroid_drv=${enable_wineandroid_drv:-no}
 enable_winemac_drv=${enable_winemac_drv:-no}
 
@@ -1956,8 +1966,8 @@ WINE_NOTICE_WITH(netapi,[test "x$ac_cv_lib_soname_netapi" = "x"],
 
 
 dnl **** Check for any sound system ****
-if test "x$enable_winealsa_drv$enable_winecoreaudio_drv$enable_winepulse_drv$enable_wineoss_drv$enable_wineandroid_drv$enable_winepipewire_drv" = xnononononono -a \
-        "x$with_alsa$with_coreaudio$with_oss$with_pulse$with_pipewire" != xnonononono
+if test "x$enable_winealsa_drv$enable_winecoreaudio_drv$enable_winedirectaudio_drv$enable_winepulse_drv$enable_wineoss_drv$enable_wineandroid_drv$enable_winepipewire_drv" = xnonononononono -a \
+        "x$with_alsa$with_aaudio$with_coreaudio$with_oss$with_pulse$with_pipewire" != xnononononono
 then
     WINE_WARNING([No sound system was found. Windows applications will be silent.])
 fi
@@ -3450,6 +3460,7 @@ WINE_CONFIG_MAKEFILE(dlls/wineandroid.drv)
 WINE_CONFIG_MAKEFILE(dlls/winebth.sys)
 WINE_CONFIG_MAKEFILE(dlls/winebus.sys)
 WINE_CONFIG_MAKEFILE(dlls/winecoreaudio.drv)
+WINE_CONFIG_MAKEFILE(dlls/winedirectaudio.drv)
 WINE_CONFIG_MAKEFILE(dlls/winecrt0)
 WINE_CONFIG_MAKEFILE(dlls/wined3d)
 WINE_CONFIG_MAKEFILE(dlls/winedmo)
@@ -3467,6 +3478,7 @@ WINE_CONFIG_MAKEFILE(dlls/winevulkan)
 WINE_CONFIG_MAKEFILE(dlls/winewayland.drv)
 WINE_CONFIG_MAKEFILE(dlls/winex11.drv)
 WINE_CONFIG_MAKEFILE(dlls/winexinput.sys)
+WINE_CONFIG_MAKEFILE(dlls/winexp.msstyles)
 WINE_CONFIG_MAKEFILE(dlls/wing.dll16)
 WINE_CONFIG_MAKEFILE(dlls/wing32)
 WINE_CONFIG_MAKEFILE(dlls/wing32/tests)
@@ -3777,6 +3789,11 @@ dnl Main ignore file
 WINE_IGNORE_FILE(TAGS)
 WINE_IGNORE_FILE(tags)
 WINE_IGNORE_FILE(config.log)
+WINE_IGNORE_FILE(include/config.h.in~)
+WINE_IGNORE_FILE(configure)
+WINE_IGNORE_FILE(configure~)
+WINE_IGNORE_FILE(wine-tools/*)
+WINE_IGNORE_FILE(.idea)
 
 if test "x$enable_tools" != xno
 then
