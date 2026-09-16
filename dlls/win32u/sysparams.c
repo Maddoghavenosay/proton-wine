@@ -8230,12 +8230,81 @@ NTSTATUS WINAPI NtUserDisplayConfigGetDeviceInfo( DISPLAYCONFIG_DEVICE_INFO_HEAD
         unlock_display_devices();
         return ret;
     }
+    case DISPLAYCONFIG_DEVICE_INFO_GET_SDR_WHITE_LEVEL:
+    {
+        DISPLAYCONFIG_SDR_WHITE_LEVEL *white_level = (DISPLAYCONFIG_SDR_WHITE_LEVEL *)packet;
+        struct monitor *monitor;
+
+        TRACE( "DISPLAYCONFIG_DEVICE_INFO_GET_SDR_WHITE_LEVEL.\n" );
+
+        if (packet->size < sizeof(*white_level))
+            return STATUS_INVALID_PARAMETER;
+
+        if (!lock_display_devices( FALSE )) return STATUS_UNSUCCESSFUL;
+
+        LIST_FOR_EACH_ENTRY(monitor, &monitors, struct monitor, entry)
+        {
+            if (white_level->header.id != monitor->output_id) continue;
+            if (memcmp( &white_level->header.adapterId, &monitor->source->gpu->luid,
+                        sizeof(monitor->source->gpu->luid) ))
+                continue;
+
+            /* In thousandths of the 80-nit SDR reference white, so 1000 is 80 nits: Windows' own
+             * default, and the only honest answer for a screen whose SDR content we do not tone
+             * map ourselves. An app that asks this right after GET_ADVANCED_COLOR_INFO used to
+             * get ERROR_INVALID_PARAMETER and could read the pair as "no HDR after all". */
+            white_level->SDRWhiteLevel = 1000;
+            ret = STATUS_SUCCESS;
+            break;
+        }
+
+        unlock_display_devices();
+        return ret;
+    }
+    case DISPLAYCONFIG_DEVICE_INFO_SET_ADVANCED_COLOR_STATE:
+    {
+        DISPLAYCONFIG_SET_ADVANCED_COLOR_STATE *color_state = (DISPLAYCONFIG_SET_ADVANCED_COLOR_STATE *)packet;
+        struct monitor *monitor;
+        BOOL enable;
+
+        TRACE( "DISPLAYCONFIG_DEVICE_INFO_SET_ADVANCED_COLOR_STATE.\n" );
+
+        if (packet->size < sizeof(*color_state))
+            return STATUS_INVALID_PARAMETER;
+
+        enable = !!color_state->enableAdvancedColor;
+
+        if (!lock_display_devices( FALSE )) return STATUS_UNSUCCESSFUL;
+
+        LIST_FOR_EACH_ENTRY(monitor, &monitors, struct monitor, entry)
+        {
+            if (color_state->header.id != monitor->output_id) continue;
+            if (memcmp( &color_state->header.adapterId, &monitor->source->gpu->luid,
+                        sizeof(monitor->source->gpu->luid) ))
+                continue;
+
+            /* The session's HDR state is decided before any of this runs - the driver reads it
+             * once, while it describes the screen - so this can only agree or refuse. Claiming a
+             * switch that did not happen is the worse failure of the two: an app told it turned
+             * HDR on would render HDR into a screen still showing SDR. */
+            if (enable == !!monitor->hdr_enabled)
+                ret = STATUS_SUCCESS;
+            else
+            {
+                FIXME( "Cannot turn advanced colour %s for monitor %s.\n",
+                       enable ? "on" : "off", debugstr_a(monitor->path) );
+                ret = STATUS_NOT_SUPPORTED;
+            }
+            break;
+        }
+
+        unlock_display_devices();
+        return ret;
+    }
     case DISPLAYCONFIG_DEVICE_INFO_SET_TARGET_PERSISTENCE:
     case DISPLAYCONFIG_DEVICE_INFO_GET_TARGET_BASE_TYPE:
     case DISPLAYCONFIG_DEVICE_INFO_GET_SUPPORT_VIRTUAL_RESOLUTION:
     case DISPLAYCONFIG_DEVICE_INFO_SET_SUPPORT_VIRTUAL_RESOLUTION:
-    case DISPLAYCONFIG_DEVICE_INFO_SET_ADVANCED_COLOR_STATE:
-    case DISPLAYCONFIG_DEVICE_INFO_GET_SDR_WHITE_LEVEL:
     default:
         FIXME( "Unimplemented packet type %u.\n", packet->type );
         return STATUS_INVALID_PARAMETER;
