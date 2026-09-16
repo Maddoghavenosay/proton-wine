@@ -5,7 +5,7 @@ Test build of **GE-Proton 11.0-7** as bionic **arm64ec** and **x86_64** layers f
 
 Both are attached as **arm64ec** and **x86_64 (box64)** builds, four files in total.
 
-> 🧪 **Pre-release for testing.** Neither layer has been booted on a device yet. This release is not Latest. Only **GE-Proton 11.0-7 arm64ec** is also in the in-app catalog, via the winlator-contents v7 release. Install the others from file. Each one installs into its own slot next to your existing layers, so nothing is overwritten.
+> 🧪 **Pre-release for testing.** None of the four builds has been confirmed working on a device yet. A first launch of GE-Proton 11.0-7.1 arm64ec closed during start-up because the container pointed at an FEXCore version that wasn't installed; that is an app issue, not the layer (see **Recommended settings** below). This release is not Latest. Only **GE-Proton 11.0-7 arm64ec** is also in the in-app catalog, via the winlator-contents v7 release. Install the others from file. Each one installs into its own slot next to your existing layers, so nothing is overwritten.
 
 ## What's new in GE-Proton 11.0-7 compared to v7 GE-Proton 11.0-6
 
@@ -82,7 +82,7 @@ GE-Proton11-7's other changes are **not** in the 11.0-7 layer. That includes the
 - **Built from:** `proton_11.7-GE` [`11c3486c`](https://github.com/The412Banner/proton-wine/commit/11c3486cc39a1ad730630c5c4554417d90d9909f) · CI run [35084480801](https://github.com/The412Banner/proton-wine/actions/runs/35084480801) (green).
 - **sha256:** `2bb5c22ebf0ccfa2b054bad62023ad96273fadcb430f0ea059d641254054ab06` (61,980,430 bytes)
 
-> ⚠️ **32-bit programs currently crash on our x86_64 layers under box64.** On v7 Proton 11.0-2 x86_64, every 32-bit Windows program tested crashed as soon as it started; that includes every Visual C++ redistributable installer, even the `_x64` ones. The same programs work on arm64ec. The desktop and 64-bit programs do run and render. Until this is fixed, use arm64ec for 32-bit games and installers; that also covers the Max Payne fix, which only helps a 32-bit game. This x86_64 build has not been booted on a device.
+> ⚠️ **32-bit programs currently crash on our x86_64 layers under box64.** On v7 Proton 11.0-2 x86_64 with box64 0.4.1, every 32-bit Windows program tested crashed as soon as it started; that includes every Visual C++ redistributable installer, even the `_x64` ones. The same programs work on arm64ec. The desktop and 64-bit programs do run and render. This has not been re-tested with the recommended box64 0.4.5 Hybrid (Bionic) yet. Until it is, use arm64ec for 32-bit games and installers; that also covers the Max Payne fix, which only helps a 32-bit game. This x86_64 build has not been booted on a device.
 
 </details>
 
@@ -142,9 +142,14 @@ GE-Proton11-7's other changes are **not** in the 11.0-7 layer. That includes the
 
 </details>
 
+## Recommended settings
+
+- **x86_64 layers: use box64 0.4.5 Hybrid (Bionic).** It gives the best controller support and compatibility with these x86_64 layers. On the app's **Contents** screen, get it from the **Nightlies** source as `Box64-0.4.5-Hybrid-…-Bionic` (currently `Box64-0.4.5-Hybrid-77fdc0baf-Bionic`; the suffix changes as the nightly updates). Pick the **Bionic** build, not Native, to match these bionic layers, then select it as the container's Box64 version.
+- **arm64ec layers: pick a FEXCore version you have installed**, for example `FEXCore-2609-stable-unix`. A new container can default to an FEXCore nightly that isn't installed. The FEX DLLs are then never copied into the container, and the session closes during start-up. The log shows `could not load C:\windows\system32\libarm64ecfex.dll, status c0000135`.
+
 ## Installation
 
-Download the `.wcp` and install it from file on the app's **Contents** screen. Then create a new arm64ec container on it, or switch a test container to it. Your existing layers and containers are not touched.
+Download the `.wcp` and install it from file on the app's **Contents** screen. GE-Proton 11.0-7 arm64ec can also be installed straight from the in-app catalog. Then create a new container of the matching kind (arm64ec or x86_64) on it, or switch a test container to it, and apply the settings above. Your existing layers and containers are not touched.
 
 ## Source
 
