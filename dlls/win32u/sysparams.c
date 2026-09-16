@@ -1099,6 +1099,8 @@ struct device_manager_ctx
     unsigned char *primary_edid;
     UINT primary_edid_len;
     char primary_monitor_path[MAX_PATH];
+    /* and whether that monitor reports advanced colour (HDR), which it shares too */
+    BOOL primary_hdr_enabled;
 };
 
 static void link_device( const char *instance, const char *class )
@@ -2080,6 +2082,37 @@ static BOOL write_monitor_to_registry( struct monitor *monitor, const BYTE *edid
     return TRUE;
 }
 
+/* Whether an EDID describes an HDR screen: a CTA-861 extension block carrying an HDR Static
+ * Metadata Data Block (extended tag 0x06) that advertises the PQ transfer function (SMPTE
+ * ST 2084). Only such a monitor may claim advanced colour, whatever a driver says: a driver that
+ * reads the switch alone (winex11.drv reads DXVK_HDR) would otherwise let an SDR screen claim it. */
+static BOOL edid_describes_hdr_screen( const unsigned char *edid, UINT edid_len )
+{
+    UINT block, offset, pos, len;
+
+    if (!edid || edid_len < 256) return FALSE;
+
+    for (block = 1; (block + 1) * 128 <= edid_len; block++)
+    {
+        const unsigned char *ext = edid + block * 128;
+
+        if (ext[0] != 0x02) continue; /* not a CTA-861 extension block */
+        offset = ext[2]; /* where the detailed timings start, i.e. the end of the data blocks */
+        if (offset < 4 || offset > 127) continue;
+
+        for (pos = 4; pos < offset; pos += len + 1)
+        {
+            len = ext[pos] & 0x1f;
+            if (!len || pos + len >= offset) break;
+            if ((ext[pos] >> 5) != 7) continue; /* not an extended tag block */
+            if (len < 2 || ext[pos + 1] != 0x06) continue; /* not HDR static metadata */
+            if (ext[pos + 2] & 0x04) return TRUE; /* EOTF: SMPTE ST 2084 */
+        }
+    }
+
+    return FALSE;
+}
+
 static void add_monitor( const struct gdi_monitor *gdi_monitor, void *param )
 {
     struct device_manager_ctx *ctx = param;
@@ -2124,13 +2157,18 @@ static void add_monitor( const struct gdi_monitor *gdi_monitor, void *param )
         ctx->monitor_count++;
 
         /* Remember the primary screen's description: a virtual desktop is shown on that
-         * screen, and add_virtual_source gives its monitor the same EDID. */
+         * screen, and add_virtual_source gives its monitor the same EDID, and with it the
+         * advanced colour (HDR) state - but only when this EDID really describes an HDR screen,
+         * so a driver that turns the flag on from an environment variable alone cannot make the
+         * virtual desktop claim HDR on a screen that has no HDR description. */
         if (ctx->is_primary && !ctx->primary_edid && gdi_monitor->edid && gdi_monitor->edid_len &&
             (ctx->primary_edid = malloc( gdi_monitor->edid_len )))
         {
             memcpy( ctx->primary_edid, gdi_monitor->edid, gdi_monitor->edid_len );
             ctx->primary_edid_len = gdi_monitor->edid_len;
             strcpy( ctx->primary_monitor_path, monitor->path );
+            ctx->primary_hdr_enabled = gdi_monitor->hdr_enabled &&
+                edid_describes_hdr_screen( gdi_monitor->edid, gdi_monitor->edid_len );
         }
     }
 }
@@ -2434,6 +2472,7 @@ static void release_display_manager_ctx( struct device_manager_ctx *ctx )
     free( ctx->primary_edid );
     ctx->primary_edid = NULL;
     ctx->primary_edid_len = 0;
+    ctx->primary_hdr_enabled = FALSE;
 }
 
 static BOOL is_monitor_active( struct monitor *monitor )
@@ -2986,6 +3025,7 @@ static BOOL add_virtual_source( struct device_manager_ctx *ctx )
      * find that screen's description here, not on the detached physical monitor. */
     monitor.edid = ctx->primary_edid;
     monitor.edid_len = ctx->primary_edid_len;
+    monitor.hdr_enabled = ctx->primary_hdr_enabled;
     add_monitor( &monitor, ctx );
 
     /* Expose the virtual source display modes as physical modes, to avoid DPI scaling */
@@ -3086,8 +3126,9 @@ static void report_monitor_edids( const char *screen_path, UINT screen_edid_len 
             NtClose( hkey );
         }
         if (pos < sizeof(line))
-            pos += snprintf( line + pos, sizeof(line) - pos, " active monitor %s: Device Parameters\\EDID %s%u bytes;",
-                             monitor->path, size ? "" : "MISSING, ", (UINT)size );
+            pos += snprintf( line + pos, sizeof(line) - pos, " active monitor %s: Device Parameters\\EDID %s%u bytes, "
+                             "advanced colour %s;", monitor->path, size ? "" : "MISSING, ", (UINT)size,
+                             monitor->hdr_enabled ? "on" : "off" );
     }
     if (!active && pos < sizeof(line)) snprintf( line + pos, sizeof(line) - pos, " no active monitor;" );
 
