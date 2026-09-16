@@ -136,7 +136,6 @@ do
       --enable-win64 \
       --disable-win16 \
       --enable-nls \
-      --disable-amd_ags_x64 \
       --enable-wineandroid_drv=no \
       --disable-tests \
       --with-alsa \
@@ -335,6 +334,18 @@ do
       verify_fail=1
     fi
 
+    # amd_ags_x64 is built now (it used to be --disable'd), and its unix side must be the Android
+    # one: bionic has no libdrm_amdgpu, so the stock unixlib.c does not compile at all, and the
+    # older form of this patch left __wine_unix_call_funcs empty, which the PE side indexes.
+    if ! grep -q '__ANDROID__' dlls/amd_ags_x64/unixlib.c; then
+      echo "FATAL: __ANDROID__ guard not present in dlls/amd_ags_x64/unixlib.c (the AGS unixlib patch did NOT apply)"
+      verify_fail=1
+    fi
+    if ! grep -q 'STATUS_NOT_IMPLEMENTED' dlls/amd_ags_x64/unixlib.c; then
+      echo "FATAL: dlls/amd_ags_x64/unixlib.c has no Android unix_call entries (empty table would be read out of bounds)"
+      verify_fail=1
+    fi
+
     if [ "$verify_fail" != "0" ]; then
       echo "FATAL: one or more Android bug-fixes failed to apply; refusing to build a silently-broken layer."
       exit 1
@@ -368,6 +379,16 @@ do
     cp -r $install_dir/bin/notepad $OUTPUT_DIR/bin
     cp -r $install_dir/lib/wine  $OUTPUT_DIR/lib
     cp -r $install_dir/share/wine  $OUTPUT_DIR/share
+
+    # A layer without amd_ags_x64.dll leaves every game that links AGS on its own bundled copy,
+    # which on a non-AMD GPU reports no display at all - and with it no HDR10. The module is
+    # built as x64 code under arm64ec (#pragma makedep arm64ec_x64), so it lands in the aarch64
+    # PE dir like the rest. Fail here rather than ship a layer that silently lost it again.
+    if ! ls "$OUTPUT_DIR"/lib/wine/*/amd_ags_x64.dll >/dev/null 2>&1; then
+      echo "FATAL: amd_ags_x64.dll is not in the built layer (the builtin AGS did not build)" >&2
+      exit 1
+    fi
+    echo "amd_ags_x64.dll present: $(ls "$OUTPUT_DIR"/lib/wine/*/amd_ags_x64.dll)"
 
     # Bundle winewayland.so's runtime deps into the wcp lib/ so the driver can load even where
     # the imagefs doesn't (yet) ship them. Vendored bionic aarch64 libs from android/wayland-deps.
