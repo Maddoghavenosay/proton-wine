@@ -220,6 +220,9 @@ def main():
         report(b"WINE_NO_OPEN_FILE_SEARCH" in ntdll_so, "ntdll.so: pso2 hack")
         report(b"Star Citizen" in read(os.path.join(pe, "user32.dll")), "user32.dll: Star Citizen msgbox silence")
         report(b"EAC_LAUNCHERDIR" in ntdll_so, "ntdll.so: EAC 60101 timeout")
+        report(b"WINE_BLACK_DESERT_KEEP_FULLSCREEN" in w32so, "win32u.so: Black Desert keep-fullscreen on focus loss")
+        # max-payne-cpu-detection is #ifdef __i386__ in the PE loader: only the wow64 ntdll carries it.
+        report(u16("rlmfc.dll") in read(os.path.join(pe32, "ntdll.dll")), "i386 ntdll.dll: Max Payne rlmfc.dll CPU detection fix")
 
     print("== verify-layer: %s" % ("PASS" if fails == 0 else "%d FATAL check(s)" % fails))
     return 0 if fails == 0 else 1

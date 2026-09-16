@@ -27,8 +27,12 @@ marker_for() {
   case "$1" in
     0001-win32u-Avoid-zero-WM_ACTIVATEAPP-lparam-on-first-for.patch)
       echo "dlls/win32u/input.c|get_activateapp_thread_id" ;;
+    ai-limit-dx12-compute-shader-fallback.patch)
+      echo "dlls/ntdll/loader.c|ai_limit_compute_thunk" ;;
     assettocorsa-hud.patch)
       echo "dlls/dwrite/font.c|244210" ;;
+    black-desert-keep-fullscreen-on-focus-loss.patch)
+      echo "dlls/win32u/input.c|WINE_BLACK_DESERT_KEEP_FULLSCREEN" ;;
     battlenet-launcher-in-process-gpu.patch)
       echo "dlls/kernelbase/process.c|Battle.net Launcher.exe" ;;
     dai_xinput.patch)
@@ -39,6 +43,10 @@ marker_for() {
       echo "dlls/kernelbase/string.c|if (!start) return NULL;" ;;
     maplestory-spi-stickykeys-filterkeys.patch)
       echo "dlls/win32u/sysparams.c|WINE_SPI_WARN(SPI_SETSTICKYKEYS)" ;;
+    max-payne-cpu-detection.patch)
+      echo "dlls/ntdll/loader.c|patch_max_payne_cpu_detection" ;;
+    nascar25-protector.patch)
+      echo "dlls/ntdll/unix/signal_x86_64.c|n25_repaired = 1;" ;;
     pso2_hack.patch)
       echo "dlls/ntdll/unix/file.c|WINE_NO_OPEN_FILE_SEARCH" ;;
     silence-starcitizen-unsupported-os.patch)
