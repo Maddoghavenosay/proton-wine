@@ -8,9 +8,9 @@ run-name: "GE-Proton 11.0-7 — ${{ github.ref_name }} (${{ github.event_name }}
 # flips it to android35 + 16KB page linker flags). That difference is now a matrix
 # axis. api_level 28 -> no flag (4KB pages); api_level 35 -> --enable-16kb-pages.
 #
-# M1 (GE-Proton 11.0-7 is arm64ec-only) trims arch to aarch64. Re-add x86_64 to the
-# arch list to restore the full 2x2 matrix; the per-arch build-step branches below
-# are preserved so that expansion is a one-line change.
+# GE-Proton 11.0-7 builds arm64ec (aarch64, sdk28 target, 16 KB page alignment) plus an
+# x86_64 (box64) leg shaped exactly like the x86_64 layer Proton 11.0-2 shipped in v7:
+# the api_level 28 leg, 4 KB page alignment (no --enable-16kb-pages).
 
 # This file is named per layer on purpose: GitHub labels a run with the workflow name
 # from the DEFAULT branch's copy of the same path, so a shared build-proton.yml made
@@ -32,7 +32,7 @@ jobs:
     runs-on: ubuntu-24.04
     strategy:
       matrix:
-        arch: [aarch64]
+        arch: [aarch64, x86_64]
         api_level: [28]
       fail-fast: false
 
@@ -159,7 +159,8 @@ jobs:
 
       - name: Configure build for ${{ matrix.arch }} (sdk${{ matrix.api_level }})
         run: |
-          PAGES_FLAG="--enable-16kb-pages"
+          PAGES_FLAG=""
+          { [ "${{ matrix.arch }}" = "aarch64" ] || [ "${{ matrix.api_level }}" = "35" ]; } && PAGES_FLAG="--enable-16kb-pages"
           if [ "${{ matrix.arch }}" == "x86_64" ]; then
             bash build-scripts/build-step-x86_64.sh $PAGES_FLAG --configure
           else
@@ -168,7 +169,8 @@ jobs:
 
       - name: Build Proton for ${{ matrix.arch }} (sdk${{ matrix.api_level }})
         run: |
-          PAGES_FLAG="--enable-16kb-pages"
+          PAGES_FLAG=""
+          { [ "${{ matrix.arch }}" = "aarch64" ] || [ "${{ matrix.api_level }}" = "35" ]; } && PAGES_FLAG="--enable-16kb-pages"
           if [ "${{ matrix.arch }}" == "x86_64" ]; then
             bash build-scripts/build-step-x86_64.sh $PAGES_FLAG --build
           else
@@ -181,7 +183,8 @@ jobs:
 
       - name: Install Proton for ${{ matrix.arch }} (sdk${{ matrix.api_level }})
         run: |
-          PAGES_FLAG="--enable-16kb-pages"
+          PAGES_FLAG=""
+          { [ "${{ matrix.arch }}" = "aarch64" ] || [ "${{ matrix.api_level }}" = "35" ]; } && PAGES_FLAG="--enable-16kb-pages"
           if [ "${{ matrix.arch }}" == "x86_64" ]; then
             bash build-scripts/build-step-x86_64.sh $PAGES_FLAG --install
           else
@@ -225,8 +228,10 @@ jobs:
         run: |
           if [ "${{ matrix.arch }}" == "x86_64" ]; then
             ARCH_NAME="x86_64"
+            DESC="Proton 11.0-7 x86_64 (bionic, box64) — Valve + fast-yield gate + xrandr/xrender + GE-Proton11-7 game-fixes (maplestory, dai_xinput, eac, pso2, assettocorsa, silence-starcitizen, vgsoh, WM_ACTIVATEAPP, black-desert fullscreen, max-payne cpu detection, ai-limit dx12 compute fallback) + realized-font-handle cap 32768 + DirectAudio v1.3.2 + Android fixes (noexec/force_anon SD-card boot, drive-root copy guard, C.UTF-8 locale). Bannerlator/WinNative/Winlator-bionic; needs a fresh x86_64 (box64) container."
           else
             ARCH_NAME="arm64ec"
+            DESC="Proton 11.0-7 ${ARCH_NAME} (bionic) — Valve + fast-yield gate + FEX-unixlib loader + xrandr/xrender + GE-Proton11-7 game-fixes (maplestory, dai_xinput, eac, pso2, assettocorsa, silence-starcitizen, vgsoh, WM_ACTIVATEAPP, black-desert fullscreen, max-payne cpu detection) + realized-font-handle cap 32768 + DirectAudio v1.3.2 + Android fixes (noexec/force_anon SD-card boot, drive-root copy guard, C.UTF-8 locale). Bannerlator/WinNative/Winlator-bionic; needs a fresh arm64ec container."
           fi
 
           # Generate Proton profile.json
@@ -235,7 +240,7 @@ jobs:
             "type": "Proton",
             "versionName": "11.0-7-${ARCH_NAME}",
             "versionCode": 7,
-            "description": "Proton 11.0-7 ${ARCH_NAME} (bionic) — Valve + fast-yield gate + FEX-unixlib loader + xrandr/xrender + GE-Proton11-7 game-fixes (maplestory, dai_xinput, eac, pso2, assettocorsa, silence-starcitizen, vgsoh, WM_ACTIVATEAPP, black-desert fullscreen, max-payne cpu detection) + realized-font-handle cap 32768 + DirectAudio v1.3.2 + Android fixes (noexec/force_anon SD-card boot, drive-root copy guard, C.UTF-8 locale). Bannerlator/WinNative/Winlator-bionic; needs a fresh arm64ec container.",
+            "description": "${DESC}",
             "files": [],
             "wine": {
               "binPath": "bin",
@@ -293,17 +298,19 @@ jobs:
           UNIX="${{ matrix.arch }}-unix"
           for WCP in *.wcp; do
             echo "== $WCP ($(stat -c %s "$WCP") bytes)"
+            echo "   sha256 $(sha256sum "$WCP" | cut -d' ' -f1)  size $(stat -c %s "$WCP")"
             tar -I zstd -tf "$WCP" > wcp.lst
             for e in profile.json prefixPack.txz bin/wine "lib/wine/$UNIX/ntdll.so" "lib/wine/$UNIX/win32u.so" share/wine/wine.inf; do
               grep -qx -- "$e" wcp.lst || { echo "FATAL: $e missing from $WCP"; exit 1; }
             done
             tar -I zstd -xf "$WCP" -O profile.json > wcp-profile.json
             cmp wcp-profile.json profile.json || { echo "FATAL: profile.json inside $WCP differs from the generated one"; exit 1; }
-            python3 -c 'import json,sys; p=json.load(open("wcp-profile.json")); print("   type=%s versionName=%s versionCode=%s" % (p["type"], p["versionName"], p["versionCode"]))'
+            python3 -c 'import json,sys; p=json.load(open("wcp-profile.json")); print("   type=%s versionName=%s versionCode=%s" % (p["type"], p["versionName"], p["versionCode"])); print("   description=%s" % p["description"]); print("   wine=%s files=%s" % (json.dumps(p["wine"]), json.dumps(p["files"])))'
             echo "   $(wc -l < wcp.lst) entries; ok"
           done
           for WCPXZ in *.wcp.xz; do
             echo "== $WCPXZ ($(stat -c %s "$WCPXZ") bytes)"
+            echo "   sha256 $(sha256sum "$WCPXZ" | cut -d' ' -f1)  size $(stat -c %s "$WCPXZ")"
             tar -tJf "$WCPXZ" | grep -qx profile.json || { echo "FATAL: profile.json missing from $WCPXZ"; exit 1; }
             echo "   ok"
           done
@@ -378,12 +385,15 @@ jobs:
 
             ### Architectures
             - arm64ec (ARM64EC)
+            - x86_64 (box64)
 
             ### WCP Files
             **Proton Type:**
             - `GE-proton-11.0-7-arm64ec.wcp` - For GameNative
+            - `GE-proton-11.0-7-x86_64.wcp` - For GameNative
 
             **Wine Type:**
             - `proton-wine-11.0-1-arm64ec.wcp.xz` - For Winlator for CMOD & Ludashi
+            - `proton-wine-11.0-1-x86_64.wcp.xz` - For Winlator for CMOD & Ludashi
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

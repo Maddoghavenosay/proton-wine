@@ -223,6 +223,12 @@ def main():
         report(b"WINE_BLACK_DESERT_KEEP_FULLSCREEN" in w32so, "win32u.so: Black Desert keep-fullscreen on focus loss")
         # max-payne-cpu-detection is #ifdef __i386__ in the PE loader: only the wow64 ntdll carries it.
         report(u16("rlmfc.dll") in read(os.path.join(pe32, "ntdll.dll")), "i386 ntdll.dll: Max Payne rlmfc.dll CPU detection fix")
+        if not arm64ec:
+            # Both are x86_64-only: ai-limit is `#if __x86_64__ && !__arm64ec__` in the PE loader,
+            # nascar25 lives in the seccomp SIGSYS path of unix/signal_x86_64.c (its SteamGameId
+            # check sits in install_bpf, so the string is only there if HAVE_SECCOMP compiled it).
+            report(u16("AI-LIMIT.exe") in read(os.path.join(pe, "ntdll.dll")), "ntdll.dll: AI LIMIT DX12 compute-shader fallback")
+            report(b"3873970" in ntdll_so, "ntdll.so: NASCAR 25 protector repair (seccomp SIGSYS)")
 
     print("== verify-layer: %s" % ("PASS" if fails == 0 else "%d FATAL check(s)" % fails))
     return 0 if fails == 0 else 1
