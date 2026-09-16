@@ -2,6 +2,107 @@
 
 Newest entry at the top.
 
+## 2026-09-16: say why the HDR option is greyed out, instead of leaving silence (versionCode 15)
+
+**Device result of versionCode 14 (user, Pocket FIT, container 7, RE3, HDR10 external screen):**
+layer install verified (`lib/wine/aarch64-windows/amd_ags_x64.dll` present, `profile.json`
+versionCode 14, container on `Proton-11.0-2.1-arm64ec-14`). `Software\Wine\AmdAgs` **absent**, with
+and without `WINEDLLOVERRIDES=amd_ags_x64=b` — confirmed in the game's own `/proc/<pid>/environ`
+alongside `DXVK_HDR=1`. Ran to the title screen and through Options → Display, killed the game,
+waited for `wineserver` to exit, force-stopped the app: `pgrep wineserver` = 0 and
+`grep -a -c AmdAgs user.reg` = 0, so not a flush artefact. HDR Mode still greyed.
+
+### The v14 diagnostic had one blind spot, and it is the interesting one
+`init_ags_context()` returned at `if (ret != AGS_SUCCESS || !context->device_count) return ret;`
+**before** `report_hdr_state()`. So an absent key means one of three things, and versionCode 14
+cannot tell them apart:
+1. the builtin never loaded and the process used the `amd_ags_x64.dll` beside `re3.exe`;
+2. it loaded, was called, and bailed on that line — a context with no Vulkan device carries no
+   display, `agsInitialize` still returns `AGS_SUCCESS` with `numDevices` 0, RE3's walk
+   (`test eax,eax; jle`) exits immediately and greys the option out;
+3. it ran all the way and honestly found no HDR.
+
+Everything ruled out by inspection this round, so the next device run is decisive rather than
+another round of the same:
+- **Not a missing import.** The built `amd_ags_x64.dll` is machine `0xaa64` (ARM64X, correct dir)
+  and imports only advapi32, kernel32, ntdll, ucrtbase, user32, version, vulkan-1 — all present in
+  the layer, sizes checked.
+- **Not a container DLL override.** `HKCU\Software\Wine\DllOverrides` in the prefix has 95 entries
+  (`dxgi`, `d3d9`, `d3d11`, `ddraw`, `d3dcompiler_*`, `openal32`, `msvc*`, `ucrtbase`, `wined3d` =
+  `native,builtin`; `atiadlxx`, `nvcuda` = `disabled`) and **no `amd_ags_x64`**, so the default
+  order applied.
+- **Not the app fighting the env var.** Bannerlator treats `WINEDLLOVERRIDES` as a user field it
+  merges into `envVars` (`EpicGameFixes.mergeDllOverrides`), it does not set a competing one.
+
+### A real arm64ec loader bug found on the way
+`load_builtin()` starts from the machine of the file it just found
+(`dlls/ntdll/unix/loader.c:1750`), and for a plain x64 DLL beside a game's `.exe` that is
+`IMAGE_FILE_MACHINE_AMD64`, so `find_builtin_dll()` searches
+`get_pe_dir(AMD64)` = **`/x86_64-windows`** — a directory an arm64ec build does not have at all
+(the wcp has only `aarch64-unix`, `aarch64-windows`, `i386-windows`; confirmed on the installed
+layer too). The identical builtin loads fine when *no* file is found anywhere, because
+`find_builtin_without_file()` (`dlls/ntdll/loader.c:3352`) uses the running process's `pe_dir`
+instead. The two paths disagree, and the consequence is that `WINEDLLOVERRIDES=<dll>=b` — the
+override versionCode 14's own notes tell people to set — **cannot do what it says** for any DLL a
+game ships beside its `.exe`: the lookup misses and `LO_BUILTIN` returns `STATUS_DLL_NOT_FOUND`.
+
+`235b0fc17a0` follows the current machine on arm64ec when the load order names the builtin
+explicitly (`LO_BUILTIN`, `LO_BUILTIN_NATIVE`), as well as for a hybrid image as before. **The
+default order is left alone on purpose:** redirecting it too would let builtins shadow every x64
+wrapper a game ships next to its exe, and the names that matter are unprotected — `dxgi`, `d3d9`,
+`d3d11`, `d3d12`, `opengl32`, `winmm`, `version`, `dsound`, `xinput1_3/1_4` have no
+`--prefer-native` in this tree, and a ReShade proxy is usually one of those. Widening it needs
+evidence this round does not have yet.
+
+### Fix (three commits, branch `feat/wayland-hdr-ags-v15` off v14's `670738f453e`)
+- `27cdaf945b9` `dlls/amd_ags_x64/amd_ags_x64_main.c`: the whole path is marked in
+  `HKEY_CURRENT_USER\Software\Wine\AmdAgs`, earliest first — `Stage` 1 DllMain attach (+`Process`,
+  `Module`), 2 an init entry point (+`Entry`, `Calls` bitmask over agsInit / agsInitialize /
+  agsGetGPUInfo / DX11_CreateDevice / DX12_CreateDevice / agsSetDisplayMode / agsDeInitialize),
+  3 version settled (+`VersionRequested`, `PublicVersion`, `AgsVersionRow`), 4 about to ask Vulkan,
+  5 Vulkan answered (+`VkCreateInstance`, `VkEnumerate`, `VkDevicesRaw`, `VkDeviceType0`,
+  `VkDeviceName0`, `VkDevicesKept`, `Devices`), 6 displays walked (+`Displays`, `Adapter`,
+  `ColorSpace`, `HDR10`, `MaxLuminance`), 7 context handed over (+`Result`). **Every exit path of
+  `init_ags_context()` reports before returning**, including the no-device one. Two fixes found on
+  that path: `if ((vr = vkCreateInstance(...) < 0))` put the comparison inside the assignment so
+  `vr` was only ever 0 or 1 in the warning (control flow was already right), and the
+  integrated/discrete device-type filter now falls back to keeping whatever Vulkan listed if it
+  would otherwise keep nothing, saying so with `VkTypeFilterBypassed` — reporting no device at all
+  is strictly worse, since only the AMD-specific fields care about the type and they are guarded
+  separately.
+- `235b0fc17a0` `dlls/ntdll/unix/loader.c`: the arm64ec builtin lookup above.
+- `301101143507` ci versionCode 14 → 15 + one sentence per profile.
+
+**X11 unaffected.** Neither commit touches win32u, winewayland or anything keyed on
+`monitor->hdr_enabled`; the loader change is inside `is_arm64ec()` and only fires for an explicit
+override.
+
+### Reading it on device
+`bridge "grep -a -A16 'Software..Wine..AmdAgs]' <prefix>/user.reg"`
+
+| what you see | what it means |
+| --- | --- |
+| key absent entirely | the builtin never loaded, and `DllMain` is as early as it gets — a loader problem, not an AGS one |
+| `Stage`=1 only | loaded, but the game never called an AGS init entry point. Check `Calls` |
+| `Stage`=5, `Devices`=0 | the v14 blind spot: Vulkan gave AGS nothing. `VkCreateInstance`/`VkEnumerate` carry the VkResult, `VkDevicesRaw`/`VkDeviceType0` say whether it was the type filter |
+| `Stage`=6, `Displays`=0 | the display walk found nothing: `EnumDisplayDevices`' DeviceString did not equal `Adapter` |
+| `Stage`=7, `ColorSpace`=8 | DXVK reported sRGB — `DXVK_HDR` did not reach the process |
+| `Stage`=7, `ColorSpace`=12, `HDR10`=1 | Wine's side is done; anything still greyed is the title's own gate |
+
+**Zero-build discriminator, works on versionCode 14 already:** rename
+`E:\Winlator\Games\Resident Evil 3\amd_ags_x64.dll` out of the way. With no file next to the exe
+the loader takes `find_builtin_without_file()`, which looks in the running process's PE directory,
+so the builtin is reachable by the path that never had the bug. If the key then appears, the
+lookup was the problem; if it still does not, the DLL is loading and failing later.
+
+**Device status: not device-proven.** No release, tag, catalog change or staging.
+
+### Carry into v8
+`27cdaf945b9` is self-contained and rides with the versionCode 14 AGS commits. `235b0fc17a0`
+touches `dlls/ntdll/unix/loader.c` and is arm64ec-only by construction — inert on any parent that
+is not an arm64ec build, and inert there too unless a DLL override names a builtin. Do not widen
+it to the default load order while carrying. The CI commit is not carried.
+
 ## 2026-09-15: the layer ships Wine's own AGS, which is where RE Engine actually asks about HDR (versionCode 14)
 
 **Ask (user, 2026-09-15, second round):** versionCode 13 is installed and partly working — the
