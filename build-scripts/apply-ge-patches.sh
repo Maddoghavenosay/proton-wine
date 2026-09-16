@@ -7,7 +7,21 @@
 #   Tier: game-fixes  -- GE per-game compat fixes. Low conflict.
 #   (ge-video-rework is NOT included in this tier; it is a separate port.)
 #
-# GE applies its patches with `patch -Np1` (fuzz tolerated), so we match that.
+# GE applies its patches with `patch -Np1`, i.e. GNU patch's default fuzz of 2, and
+# so do we. (Fuzz 3 ignores every context line of a 3-line hunk: on this base it
+# "applied" nascar25-protector into a comment block and a different function, and
+# the per-patch marker still matched.)
+#
+# Not carried from GE-Proton11-7 patches/game-patches (all deliberate):
+#   layered-overlay-wine, multi-process-launcher-x11-fallback -- skipped on every
+#     one of our GE layers (desktop compositor / Wayland launcher paths).
+#   nascar25-protector -- rewrites the x86_64 Linux SIGSYS handler that GE's
+#     wine-wayland 0271 "Forward syscalls to linux when EAC EOS bootstrapper" hack
+#     adds; Valve 46b29104 has no Linux SIGSYS handler for it to hook (macOS only).
+#     It is unix signal_x86_64.c code, which an arm64ec build never compiles, and
+#     under FEX the x86 syscall instruction never reaches a host SIGSYS anyway.
+# dai_xinput is carried from our GE 11-6 layer: GE 11-7 dropped it for its Sony
+# XInput hotfix stack, which this layer does not take.
 #
 # Fail-hard contract:
 #   * a patch that does not apply is a FATAL error (CI surfaces the conflict);
@@ -47,9 +61,6 @@ marker_for() {
     max-payne-cpu-detection.patch)
       # i386 ntdll only (#ifdef __i386__): active for 32-bit Max Payne under FEX WoW64
       echo "dlls/ntdll/loader.c|patch_max_payne_cpu_detection" ;;
-    nascar25-protector.patch)
-      # unix signal_x86_64.c: not compiled into the arm64ec build
-      echo "dlls/ntdll/unix/signal_x86_64.c|use_nascar25_hack" ;;
     pso2_hack.patch)
       echo "dlls/ntdll/unix/file.c|WINE_NO_OPEN_FILE_SEARCH" ;;
     return-to-krondor-text-bitmap-readback.patch)
@@ -78,7 +89,7 @@ apply_dir() {
     fi
     local file="${marker%%|*}" token="${marker#*|}"
     echo "GE[$tier]: applying $name"
-    if ! patch -Np1 --fuzz=3 --no-backup-if-mismatch < "$p"; then
+    if ! patch -Np1 --fuzz=2 --no-backup-if-mismatch < "$p"; then
       echo "GE[$tier]: FATAL: failed to apply $name"
       fail=$((fail+1))
       continue
