@@ -2,6 +2,155 @@
 
 Newest entry at the top.
 
+## 2026-09-15: the layer ships Wine's own AGS, which is where RE Engine actually asks about HDR (versionCode 14)
+
+**Ask (user, 2026-09-15, second round):** versionCode 13 is installed and partly working — the
+compositor reports `qcom_compressed` buffers, `strings … winewayland.so | grep -c DXVK_HDR` = 3 on
+the installed layer against 0 on v11, and **both** monitor devices in the prefix carry the advanced
+colour device property as TRUE
+(`…\Enum\DISPLAY\WAY0001\0000&0000\Properties\{233a9ef3-…}\0006 @=hex(ffff0011):01,00,00,00`, same
+for `0001&0000`). Resident Evil 3 still greys "HDR Mode" out with *"This setting requires HDR
+support."* Find the remaining gap. Wine's stderr is discarded by this app, so no diagnostic may
+depend on it.
+
+### v13's premise was wrong for this game. DisplayConfig is not where it asks.
+
+Disassembled the installed `re3.exe` (167 MB, `E:\Winlator\Games\Resident Evil 3\`) and the
+installed `dxgi.dll`, and read the prefix registry, rather than reasoning from the import list.
+
+- **`re3.exe` does send the packets — and throws two of the answers away.** There are exactly 10
+  call sites for the DisplayConfig triple, all in one display-enumeration function. Per active
+  path it sends, in order, types **3, 4, 6, 7, 9, 11** (`.text:0x142eafec6`…`0x142eaffe6`):
+  `…ffa4  mov dword [rbp-0x6c], 0x20` / `…ffaf  mov dword [rbp-0x70], 9` → GET_ADVANCED_COLOR_INFO,
+  then `…ffd4  mov dword [rbp-0xc], 0x18` / `…ffdf  mov dword [rbp-0x10], 0xb` →
+  GET_SDR_WHITE_LEVEL. Neither return value is tested, and **neither buffer is ever read back**:
+  across the whole function the only later accesses to `[rbp-0x70 … -0x54]` and `[rbp-0x10 … +4]`
+  are writes, from unrelated code reusing the slots. What it *does* consume right after is
+  `[r13+0x1c]`/`[r13+0x20]` (the source mode's `position.x/y`) and `[rsi+0x28]`/`[rsi+0x2c]` (the
+  target mode's `activeSize.cx/cy`) — geometry, not colour. Only the type-3 result is stored, and
+  only on success. **So versionCode 13 could not have changed this title's mind.**
+- **The id match (candidate a) is sound — ruled out, not assumed.** The game builds each header
+  from `modes[i].id` / `modes[i].adapterId` (`mov ecx,[rsi+4]` / `mov rax,[rsi+8]` on a
+  `DISPLAYCONFIG_MODE_INFO`), which for a target mode is exactly what `set_mode_target_info()`
+  writes: `monitor->output_id` and `monitor->source->gpu->luid`
+  (`dlls/win32u/sysparams.c:3862-3864`) — the same pair the handler matches on at `:8205-8209`.
+  The handler compares `header.adapterId` too, contrary to the brief. Device registry confirms the
+  ids line up: `DISPLAY\WAY0001\0000&0000` is the **virtual** source's monitor with output_id **1**
+  (`{CA085853-…}\0002 = 01,00,00,00`), `0001&0000` is the detached physical one with output_id
+  **0**; both carry the HDR property and both carry the 256-byte EDID.
+- **The EDID is correct.** Decoded the one in the prefix: v1.4, digital, 10 bits per primary
+  (`0xb5`), 1280x720@60 DTD, name "Wayland", 1 extension = CTA-861 rev 3 carrying a Colorimetry
+  Data Block (BT.2020 RGB) and an HDR Static Metadata Data Block with ET bit 2 set (SMPTE ST 2084),
+  max-luminance code 106 ≈ 497 nits, frame-average code 74 ≈ 248 nits.
+- **DXVK never asks Wine about advanced colour.** Its `dxgi.dll` has 3 real
+  `DisplayConfigGetDeviceInfo` call sites and the packet types are the two 8-byte constants at
+  `0x2ee36fb30`/`0x2ee36fb38`: `type=1 size=84` (GET_SOURCE_NAME) and `type=2 size=420`
+  (GET_TARGET_NAME) — monitor→device-path mapping only, for the SetupAPI EDID read. `DXVK_HDR` /
+  `dxgi.enableHDR` is read at `0x2edf0c1ac` (`cmp qword [rsp+0xc8],1` / `cmp byte [rax],0x31`) into
+  `options->enableHDR` at +0x3c, and the only thing that can clear it is the UE4 guard
+  (`rfind("-Win64-Shipping")` then `GetModuleHandleA("d3d12")`), which cannot fire for `re3.exe`.
+  **So `IDXGIOutput6::GetDesc1` was already returning `DXGI_COLOR_SPACE_RGB_FULL_G2084_NONE_P2020`
+  on this container**, and a DXGI-only gate would have worked before v13.
+
+### Root cause: the layer has never shipped `amd_ags_x64.dll`
+
+`re3.exe` imports **15** entry points from `amd_ags_x64.dll`, including `agsInitialize` and
+`agsSetDisplayMode` — AMD's "put this display into HDR10" call. It imports **no** NVAPI symbol at
+all (`grep -c nvapi64 re3.exe` = 0), so the NVAPI route the community writeups describe is not this
+binary. Its HDR answer comes from `AGSDisplayInfo`.
+
+Wine's builtin fills that in from DXGI and is **not** AMD-only:
+`fill_chroma_info()` (`dlls/amd_ags_x64/amd_ags_x64_main.c:553-565`) walks every DXGI adapter and
+output, matches on `HMONITOR`, and sets `info->HDR10 = 1` when
+`output_desc.ColorSpace == DXGI_COLOR_SPACE_RGB_FULL_G2084_NONE_P2020`. Only the extra AMD device
+fields sit behind `vk_properties->vendorID == 0x1002` (`:793`); the display walk
+(`init_device_displays_600()`, `:838`) runs for every Vulkan device. That is what the DLL is for.
+
+The arm64ec build passed **`--disable-amd_ags_x64`** (`build-scripts/build-step-arm64ec.sh:139`),
+so it was never built. Checked on the device: `lib/wine/aarch64-windows/` in versionCode 9, 10, 11
+**and** 13 has `atiadlxx.dll` and `amdxc64.dll` and no `amd_ags_x64.dll`; the prefix has none
+either. So every AGS title on this layer has always loaded the copy sitting next to its own .exe —
+for RE3 a 42 KB `amd_ags_x64.dll` whose only USER32 import is `EnumDisplayDevicesA` and whose
+display data comes from ADL2/`atiadlxx`. On a Turnip/Adreno device that finds no AMD display, so
+`HDR10` stays 0 and the game says the setting requires HDR support. Exactly the observed sentence.
+
+### Fix (four commits, branch `feat/wayland-hdr-ags-v14` off v13's `c7c25989efd`)
+- `5b934b4ef4b` `build-scripts/build-step-arm64ec.sh` + `android/patches/…unixlib.c.patch`: drop
+  `--disable-amd_ags_x64`. Nothing else was needed to build it — `WIN_ARCH` already has `arm64ec`
+  and `#pragma makedep arm64ec_x64` is used by modules that build here today (ntdll, rpcrt4,
+  oleaut32). The Android unixlib patch gained two stub entries: bionic has no `libdrm_amdgpu`, so
+  the stock `unixlib.c` was `#ifdef`'d out, but it left `__wine_unix_call_funcs[] = {}` — the PE
+  side indexes that table by `enum amd_ags_funcs` and the dispatcher does not bounds check. Only
+  reachable behind `vendorID == 0x1002`, i.e. never on Adreno, but the table is now the right shape
+  and answers `STATUS_NOT_IMPLEMENTED`, which `init_unix_lib()` already reads as "no unix side".
+  Two new post-apply greps (`__ANDROID__`, `STATUS_NOT_IMPLEMENTED` in that file) join the
+  hardening block, because the apply loop is fail-soft; and `--install` now aborts if
+  `amd_ags_x64.dll` is missing from the built layer.
+- `fa7607d7030` `dlls/amd_ags_x64/amd_ags_x64_main.c` + `Makefile.in`: the device diagnostic, see
+  below. `advapi32` joins the imports.
+- `a63e57ae66f` `dlls/win32u/sysparams.c`: `GET_SDR_WHITE_LEVEL` answers 1000 (the 80-nit SDR
+  reference white, in the thousandths the field is defined in — Windows' own default) and
+  `SET_ADVANCED_COLOR_STATE` agrees when the request matches `monitor->hdr_enabled` and returns
+  `STATUS_NOT_SUPPORTED` when it does not, instead of both falling into the "Unimplemented packet
+  type" arm. This is the user's candidate (b), closed on principle rather than on evidence: RE3
+  discards the type-11 result, so it cannot be *this* title's cause, but an app that reads a
+  failure there as "the HDR query failed" would behave identically to one never told about HDR.
+  `GET_TARGET_BASE_TYPE` (6) and `GET_SUPPORT_VIRTUAL_RESOLUTION` (7) are left failing: nothing to
+  do with colour, and RE3 discards those too.
+- `b62aba315a1` ci versionCode 13 → 14 + one sentence per profile.
+
+**Load order.** `dlls/amd_ags_x64/Makefile.in` has no `--prefer-native`, so the builtin does not
+carry `IMAGE_DLLCHARACTERISTICS_PREFER_NATIVE`, which is the only thing `prefer_native` is checked
+against (`dlls/ntdll/unix/loader.c:1039`, reached from `load_builtin()`'s `LO_DEFAULT` arm at
+`:1779`). So with the DLL present, Wine's default load order takes the builtin over the copy next
+to the .exe. A container that wants the old behaviour sets the `amd_ags_x64` DLL override to
+`native` or `disabled` — that is also the one-line rollback if this regresses an AGS title.
+
+**X11 guarantee (v13's, kept).** Both new win32u cases read `monitor->hdr_enabled` and nothing
+else, so an X11 session — no EDID, `edid_describes_hdr_screen()` false, virtual monitor's flag off
+— answers for an SDR screen exactly as in v13. AGS's `HDR10` is a different flag on a different
+path: it comes from DXVK's colour space, i.e. from `DXVK_HDR`, which is what it would be on real
+Proton, and the app only exports it when the user turns HDR on.
+
+### Diagnostic, readable with no Wine stderr
+`init_ags_context()` writes, once per process and only in a process that uses AGS at all, to
+**`HKEY_CURRENT_USER\Software\Wine\AmdAgs`** (the prefix's `user.reg`, the same class of marker as
+the monitor device property the user could already read):
+
+| value | meaning |
+| --- | --- |
+| `Process` | which .exe wrote it |
+| `Adapter` | the Vulkan device name displays are matched against |
+| `Displays` | how many displays AGS reported |
+| `ColorSpace` | `DXGI_OUTPUT_DESC1.ColorSpace`, or -1 if no DXGI output matched the monitor |
+| `HDR10` | what the game is told; 1 iff `ColorSpace` was 12 |
+| `MaxLuminance` | the screen's peak in nits, as DXGI read it out of our EDID |
+
+Reading it: **key absent** ⇒ the builtin never ran and the process is still on its own
+`amd_ags_x64.dll` (add the DLL override). **`Displays` 0** ⇒ the display walk found nothing, which
+means `EnumDisplayDevicesA`'s `DeviceString` did not equal `Adapter` — the walk requires an exact
+`strcmp` (`:615`). **`ColorSpace` 8** ⇒ `DXVK_HDR` never reached the process. **`ColorSpace` 12 and
+`HDR10` 1** ⇒ Wine's side is done and anything still greyed out is the title's own gate (RE Engine
+is reported to want exclusive fullscreen, and `re3_config.ini` currently has `PCWindowMode=0`,
+`FullScreenMode=false`, `PCColorSpace=0`). A `MESSAGE` line says the same thing for anyone whose
+stderr does survive.
+
+**Device status: not device-proven.** No release, tag, catalog change or staging.
+
+### Carry into v8 (all seven parents)
+- The AGS work travels with v13's `efec2d86a45` + `4fc5781cf58` as one HDR feature, but note it is
+  **build-script, not Wine source**: `--disable-amd_ags_x64` exists in
+  `build-scripts/build-step-x86_64.sh:116` too and is deliberately left there. Each parent that
+  gets an arm64ec Wayland build needs the flag dropped in its own copy of the arm64ec script, plus
+  `android/patches/dlls_amd_ags_x64_unixlib.c.patch` in its patch list and in its verification
+  block. A parent whose `dlls/amd_ags_x64` is an older Proton import must be checked for the
+  `vendorID == 0x1002` placement first: the display walk has to be **outside** it, or the builtin
+  reports nothing on an Adreno.
+- Cherry-pick `fa7607d7030` (diagnostic) and `a63e57ae66f` (win32u packets) freely; both are
+  self-contained. `a63e57ae66f` touches only `dlls/win32u/sysparams.c` and applies to the X11-only
+  parents, where it is inert while their virtual monitor's `hdr_enabled` stays off.
+- The CI commit is NOT carried; each parent stamps its own versionCode.
+
 ## 2026-09-15: Windows tells games the screen is in HDR, so their own HDR option stops being greyed out (versionCode 13)
 
 **Ask (user, 2026-09-15):** in-game HDR options are still greyed out on versionCode 11/12, whose
