@@ -207,6 +207,9 @@ do
       "dlls_ntdll_Makefile.in.patch"
       "dlls_ntdll_unix_fsync.c.patch"
       "dlls_ntdll_unix_loader.c.patch"
+      # x86_64 only: Valve 46b29104 execs child 64-bit processes via i386-unix/wine64(-preloader)
+      # (Proton's packaging layout); fall back to the x86_64-unix layout our layer ships.
+      "dlls_ntdll_unix_loader.c.x86_64_preloader.patch"
       "dlls_ntdll_unix_server.c.patch"
       "dlls_ntdll_unix_sync.c.patch"
       "dlls_ntdll_unix_virtual.c.patch"
@@ -317,6 +320,8 @@ do
       "dlls/ntdll/unix/env.c|C.UTF-8|LC_ALL=C.UTF-8 bionic locale bring-up"
       "dlls/winedirectaudio.drv/directaudio.c|BANNER_AUDIO_DIRECT_MIC|DirectAudio driver is the v1.3.2 build (mic capture)"
       "dlls/xinput1_3/main.c|transient wait failure in the update thread|xinput WAIT_FAILED retry (controller-dies fix)"
+      "dlls/winepulse.drv/pulse.c|Failed to create timer event, timer callbacks disabled|winepulse rttime_new guard (re-ported onto the 46b29104 period timer)"
+      "dlls/ntdll/unix/loader.c|using the x86_64-unix wine64-preloader layout|x86_64 child-process exec falls back to the x86_64-unix wine64-preloader layout"
       "dlls/ws2_32/unixlib.c|EMULATE_V4MAPPED|ws2_32 AI_V4MAPPED emulation (EA DirtySDK DNS)"
       "dlls/nsiproxy.sys/ip.c|WINE_ANDROID_GATEWAY|nsiproxy default-route fix (EA offline latch)"
       "dlls/dnsapi/libresolv.c|LIBANDROID_HANDLE|dnsapi Android resolver"

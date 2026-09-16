@@ -1,0 +1,26 @@
+diff --git a/dlls/ntdll/unix/loader.c b/dlls/ntdll/unix/loader.c
+index 5be6a07e573..d1290a31fad 100644
+--- a/dlls/ntdll/unix/loader.c
++++ b/dlls/ntdll/unix/loader.c
+@@ -578,6 +578,21 @@ static void preloader_exec( char **argv, WORD machine )
+     {
+         asprintf( &argv[0], "%si386-unix/wine64-preloader", p );
+         asprintf( &argv[1], "%si386-unix/wine64", p );
++#ifdef __ANDROID__
++        /* Bannerlator: Proton's packaging moves loader64's wine64 + wine64-preloader into
++         * i386-unix; our bionic layers ship them where loader64 installs them (x86_64-unix,
++         * and a new-WoW64 build has no i386-unix at all). Without this every 64-bit child
++         * process (explorer -> wfm.exe, services, games) fails to exec. Fall back to the
++         * pre-46b29104 layout: x86_64-unix/wine64-preloader running x86_64-unix/wine. */
++        if (access( argv[1], X_OK ))
++        {
++            WARN( "android: %s not found, using the x86_64-unix wine64-preloader layout\n", argv[1] );
++            free( argv[0] );
++            free( argv[1] );
++            asprintf( &argv[0], "%sx86_64-unix/wine64-preloader", p );
++            asprintf( &argv[1], "%sx86_64-unix/wine", p );
++        }
++#endif
+     }
+     else
+ #endif

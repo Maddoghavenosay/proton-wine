@@ -177,6 +177,14 @@ def main():
     report(b"C.UTF-8" in ntdll_so, "ntdll.so: C.UTF-8 bionic locale bring-up")
     if arm64ec:
         report(b"load_unixlib_by_name" in ntdll_so, "ntdll.so: FEX unixlib load-by-name loader")
+    else:
+        # Valve 46b29104 execs 64-bit child processes via i386-unix/wine64(-preloader) (Proton's
+        # packaging layout); the bionic x86_64 layer falls back to x86_64-unix/wine64-preloader,
+        # so the fallback must be compiled in AND its target must be in the tree.
+        report(b"using the x86_64-unix wine64-preloader layout" in ntdll_so,
+               "ntdll.so: child-process exec falls back to the x86_64-unix preloader layout")
+        report(os.path.isfile(os.path.join(unix, "wine64-preloader")),
+               "x86_64-unix/wine64-preloader present (child-process exec target)")
     report(b"WINE_ANDROID_GATEWAY" in read(os.path.join(unix, "nsiproxy.so")),
            "nsiproxy.so: EA default-route fix (WINE_ANDROID_GATEWAY)")
     xin = b"transient wait failure in the update thread"
@@ -226,6 +234,10 @@ def main():
                "i386 ntdll.dll: Max Payne CPUID leaf fix (GE 11-7, active under WoW64)")
         report(b"244210" in read(os.path.join(pe, "dwrite.dll")), "dwrite.dll: Assetto Corsa HUD (GE 11-7 dwrite rewrite)")
         report(u16("218210") in read(os.path.join(pe, "kernelbase.dll")), "kernelbase.dll: Vanguard Saga of Heroes cwd fix")
+        if not arm64ec:
+            # compiled only for x86_64 PE ntdll (#if __x86_64__ && !__arm64ec__); inert on arm64ec
+            report(u16("AI-LIMIT.exe") in read(os.path.join(pe, "ntdll.dll")),
+                   "ntdll.dll: AI LIMIT DX12 compute-shader fallback (GE 11-7, x86_64 only)")
 
     print("== verify-layer: %s" % ("PASS" if fails == 0 else "%d FATAL check(s)" % fails))
     return 0 if fails == 0 else 1
