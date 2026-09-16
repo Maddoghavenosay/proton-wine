@@ -1,0 +1,2 @@
+# run_id|artifact|file|sha256|versionName
+35084480801|proton-x86_64-sdk28|GE-proton-11.0-7-x86_64.wcp|2bb5c22ebf0ccfa2b054bad62023ad96273fadcb430f0ea059d641254054ab06|11.0-7-x86_64
