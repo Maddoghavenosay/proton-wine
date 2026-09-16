@@ -3,7 +3,7 @@ Test build of **GE-Proton 11.0-7** as bionic **arm64ec** and **x86_64** layers f
 - **GE-Proton 11.0-7**: our v7 **GE-Proton 11.0-6** layer with GE-Proton11-7's game fixes.
 - **GE-Proton 11.0-7.1** (experimental): the same v7 stack moved onto the newer Valve Wine that GE-Proton11-7 is built on.
 
-Both arm64ec layers are attached, plus the **x86_64 (box64)** build of GE-Proton 11.0-7. The x86_64 build of GE-Proton 11.0-7.1 is still building and will be added here.
+Both are attached as **arm64ec** and **x86_64 (box64)** builds, four files in total.
 
 > 🧪 **Pre-release for testing.** Neither layer has been booted on a device yet. This release is not Latest. Only **GE-Proton 11.0-7 arm64ec** is also in the in-app catalog, via the winlator-contents v7 release. Install the others from file. Each one installs into its own slot next to your existing layers, so nothing is overwritten.
 
@@ -100,7 +100,7 @@ GE-Proton11-7's other changes are **not** in the 11.0-7 layer. That includes the
 | **DirectAudio** | v1.3.2, opt-in via registry `Audio=directaudio`; mic capture opt-in via `BANNER_AUDIO_DIRECT_MIC=1` |
 | **XInput fix** | the update thread survives transient wait failures. Re-ported onto Valve's reworked xinput, which still ended the thread on a failure. |
 | **Wine XP desktop** | Luna taskbar and start menu · XP window frames · `winexp.msstyles` visual style: Blue / Olive Green / Silver, or navy / moss / graphite in dark mode |
-| **Asset** | `GE-proton-11.0-7.1-arm64ec.wcp` (one file for 4 KB and 16 KB page devices) |
+| **Assets** | `GE-proton-11.0-7.1-arm64ec.wcp` (one file for 4 KB and 16 KB page devices) · `GE-proton-11.0-7.1-x86_64.wcp` (box64, 4 KB pages) |
 
 **Android compatibility fixes:** SD-card boot (`noexec` / `force_anon`) · drive-root copy guard · `C.UTF-8` locale
 **Runtime:** realized-font-handle cap `32768` · `WINEVMEMMAXSIZE` cap · fast-yield gate · FEX-unixlib load-by-name loader · XRandR / XRender · esync (fsync is compiled out because Android blocks it)
@@ -128,7 +128,17 @@ GE-Proton11-7's other changes are **not** in the 11.0-7 layer. That includes the
 - The layer verifier passed on the built binaries: XP desktop, DirectAudio 1.3.2, `RtlIsEcCode` bytes, font cap, XInput fix, EA fixes, GE markers.
 - The wcp has 2,248 entries against 2,246 in v7 Proton 11.0-2. The only additions are the two `igd10iumd64.dll` files, and nothing is missing.
 
-**sha256:** `acb6dc12060c0ae79747d8bd375dd4dc271cc6e3494a73663c2da063b41445a7` (96,722,063 bytes)
+**sha256 (arm64ec):** `acb6dc12060c0ae79747d8bd375dd4dc271cc6e3494a73663c2da063b41445a7` (96,722,063 bytes)
+
+**x86_64 (box64) build**, `GE-proton-11.0-7.1-x86_64.wcp`, installs as `11.0-7.1-x86_64-1`. It has the same source and checks as the arm64ec layer, built for x86_64 at Android API 28 with 4 KB pages, the same way as v7's Proton 11.0-2 x86_64 layer:
+- **Checks:** all 55 Android patches applied (the 54 shared ones plus one x86_64 fix below). All 22 shipped-feature source checks, the GE tier (13/13) and the layer verifier passed on x86_64.
+- **x86_64 loader fix:** Valve's newer loader starts every 64-bit child process through `i386-unix/wine64-preloader`, which is where Valve's own Proton packaging puts it. Our layer ships those files in `x86_64-unix`. Without a fix, starting any 64-bit program from another one would have failed: explorer, services, the file manager, games. A small x86_64-only patch falls back to the v7 layout when the `i386-unix` files are absent.
+- **Files:** 2,250 entries against 2,248 in v7 Proton 11.0-2 x86_64. The only additions are Valve's two `igd10iumd64.dll` files.
+- **AI LIMIT's DX12 fix is active** on x86_64. `nascar25-protector` is not included (see above).
+- **Built from:** `wip/proton_11.7-GE-valve` [`20518b4c`](https://github.com/The412Banner/proton-wine/commit/20518b4ce72b463877ad03db4804c0bb9a5e0dfb) · CI run [35084714328](https://github.com/The412Banner/proton-wine/actions/runs/35084714328) (green).
+- **sha256:** `0f130ca05808d31f59d94232e6ff353f7f3807f1b90694f0991bd9a15b3c7ee7` (63,837,021 bytes)
+
+> ⚠️ **32-bit programs currently crash on our x86_64 layers under box64** (see the GE-Proton 11.0-7 x86_64 note above). Valve's newer base does not change how 32-bit code starts on x86_64 (`wow64cpu` and the x86 signal/preloader code are unchanged), so expect the same here. This x86_64 build has not been booted on a device.
 
 </details>
 
