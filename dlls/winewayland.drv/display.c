@@ -43,6 +43,12 @@ WINE_DEFAULT_DEBUG_CHANNEL(waylanddrv);
  * variables set the monitor gets no EDID, as before. */
 static struct wayland_edid_hdr edid_hdr = {-1, -1, -1};
 static BOOL edid_hdr_given;
+/* DXVK_HDR=1: the app switched HDR output on for this session, read exactly as Proton's X11
+ * driver reads it, so both drivers gate Windows advanced colour on the same thing. */
+static BOOL hdr_output_enabled;
+/* The EDID names a real peak luminance, so it describes an HDR10 screen. An SDR screen gets no
+ * EDID from us at all, and must never be able to claim advanced colour. */
+static BOOL edid_hdr_has_peak;
 
 static void edid_hdr_init(void)
 {
@@ -56,6 +62,8 @@ static void edid_hdr_init(void)
     const char *env;
     int i;
 
+    hdr_output_enabled = (env = getenv("DXVK_HDR")) && *env == '1';
+
     for (i = 0; i < 3; i++)
     {
         if (!(env = getenv(names[i]))) continue;
@@ -65,6 +73,7 @@ static void edid_hdr_init(void)
     if (!edid_hdr_given) return;
 
     max_code = wayland_edid_max_luminance_code(edid_hdr.max_nits);
+    edid_hdr_has_peak = max_code != 0;
     avg_code = wayland_edid_max_luminance_code(edid_hdr.max_avg_nits);
     min_code = wayland_edid_min_luminance_code(edid_hdr.min_nits, max_code);
     if (max_code) snprintf(said[0], sizeof(said[0]), "%.4g (EDID %.1f)", edid_hdr.max_nits,
@@ -93,19 +102,23 @@ static const struct wayland_edid_hdr *get_edid_hdr(void)
 /* Which process described the screen, and what win32u was handed: once per process, and again
  * if it changes. win32u serializes display updates, so no lock is needed here. */
 static void report_edid_handoff(const char *output_name, const struct wayland_output_mode *mode,
-                                UINT edid_len)
+                                UINT edid_len, BOOL hdr_enabled)
 {
     static UINT last_len = ~0u;
-    static int last_width, last_height;
+    static int last_width, last_height, last_hdr = -1;
 
-    if (edid_len == last_len && mode->width == last_width && mode->height == last_height) return;
+    if (edid_len == last_len && mode->width == last_width && mode->height == last_height &&
+        last_hdr == (int)hdr_enabled) return;
     last_len = edid_len;
     last_width = mode->width;
     last_height = mode->height;
+    last_hdr = hdr_enabled;
 
     MESSAGE("winewayland: %s (pid %04x) built the screen's EDID for output %s (%dx%d) and hands "
-            "win32u %u bytes\n", process_name ? process_name : "?", (UINT)GetCurrentProcessId(),
-            output_name ? output_name : "?", mode->width, mode->height, edid_len);
+            "win32u %u bytes, advanced colour %s\n", process_name ? process_name : "?",
+            (UINT)GetCurrentProcessId(), output_name ? output_name : "?", mode->width, mode->height,
+            edid_len, hdr_enabled ? "on (DXVK_HDR=1, HDR10 EDID)" :
+            hdr_output_enabled ? "off (the EDID names no peak luminance)" : "off (DXVK_HDR is not 1)");
 }
 
 struct output_info
@@ -298,11 +311,16 @@ static void wayland_add_device_monitor(const struct gdi_device_manager *device_m
     {
         monitor.edid_len = wayland_edid_build(edid, hdr, mode->width, mode->height, mode->refresh);
         monitor.edid = edid;
-        report_edid_handoff(output_info->output->name, mode, monitor.edid_len);
+        /* And tell Windows the screen is in HDR, so a game's own HDR option stops being greyed
+         * out: DisplayConfig reports advanced colour for this monitor. Both halves are needed -
+         * the session's HDR switch is on, and this monitor really is described as HDR10. */
+        monitor.hdr_enabled = hdr_output_enabled && edid_hdr_has_peak;
+        report_edid_handoff(output_info->output->name, mode, monitor.edid_len, monitor.hdr_enabled);
     }
 
-    TRACE("name=%s rc_monitor=rc_work=%s edid_len=%u\n",
-          output_info->output->name, wine_dbgstr_rect(&monitor.rc_monitor), monitor.edid_len);
+    TRACE("name=%s rc_monitor=rc_work=%s edid_len=%u hdr_enabled=%d\n",
+          output_info->output->name, wine_dbgstr_rect(&monitor.rc_monitor), monitor.edid_len,
+          monitor.hdr_enabled);
 
     device_manager->add_monitor(&monitor, param);
 }
