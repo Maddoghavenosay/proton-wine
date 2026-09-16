@@ -73,6 +73,7 @@ static const WCHAR state_flagsW[] = {'S','t','a','t','e','F','l','a','g','s',0};
 static const WCHAR hardware_idW[] = {'H','a','r','d','w','a','r','e','I','D',0};
 static const WCHAR device_descW[] = {'D','e','v','i','c','e','D','e','s','c',0};
 static const WCHAR driver_descW[] = {'D','r','i','v','e','r','D','e','s','c',0};
+static const WCHAR inf_pathW[] = {'I','n','f','P','a','t','h',0};
 static const WCHAR yesW[] = {'Y','e','s',0};
 static const WCHAR noW[] = {'N','o',0};
 static const WCHAR modesW[] = {'M','o','d','e','s',0};
@@ -1612,6 +1613,9 @@ static BOOL write_gpu_to_registry( const struct gpu *gpu, const struct pci_id *p
         set_reg_value( subkey, NULL, 0xffff0000 | DEVPROP_TYPE_STRING, gpu->name, name_size );
         NtClose( subkey );
     }
+
+    if (pci->vendor == 0x8086)
+        set_reg_value( hkey, inf_pathW, REG_SZ, bufferW, asciiz_to_unicode( bufferW, "igd_faux.inf" ) );
 
     if ((subkey = reg_create_ascii_key( hkey, devpkey_device_driver_provider, 0, NULL )))
     {
@@ -4963,7 +4967,7 @@ HMONITOR monitor_from_window( HWND hwnd, UINT flags, UINT dpi )
     TRACE( "(%p, 0x%08x)\n", hwnd, flags );
 
     wp.length = sizeof(wp);
-    if (is_iconic( hwnd ) && NtUserGetWindowPlacement( hwnd, &wp ))
+    if (is_iconic( hwnd ) && get_window_placement( hwnd, &wp ))
         return monitor_from_rect( &wp.rcNormalPosition, flags, dpi );
 
     if (get_window_rect( hwnd, &rect, dpi ))
@@ -6201,7 +6205,7 @@ void sysparams_init(void)
     if (!get_config_key( hkey, appkey, "EmulateModelist", buffer, sizeof(buffer) ))
         emulate_modelist = !IS_OPTION_TRUE( buffer[0] );
     if (!get_config_key( hkey, appkey, "EmulateModeset", buffer, sizeof(buffer) ))
-        emulate_modeset = !IS_OPTION_TRUE( buffer[0] );
+        emulate_modeset = IS_OPTION_TRUE( buffer[0] );
 
     {
         const char *s;

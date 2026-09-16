@@ -357,6 +357,7 @@ static BOOL is_ignored_env_var( const char *var )
             STARTS_WITH( var, "SDL_AUDIO_DRIVER=" ) ||
             STARTS_WITH( var, "SDL_VIDEODRIVER=" ) ||
             STARTS_WITH( var, "SDL_VIDEO_DRIVER=" ) ||
+            STARTS_WITH( var, "WAYLAND_DISPLAY=" ) ||
             STARTS_WITH( var, "VK_" ) ||
             STARTS_WITH( var, "XR_" ));
 }
@@ -743,17 +744,6 @@ static void init_locale(void)
 
     if (!unix_to_win_locale( ctype, system_locale )) system_locale[0] = 0;
     TRACE_(nls)( "Unix LC_CTYPE is %s, setting system locale to %s\n", debugstr_a(ctype), debugstr_a(user_locale) );
-
-    if (main_argc > 1 && (
-            strstr(main_argv[1], "start_protected_game.exe")
-            || strstr(main_argv[1], "RocketLeague_EAC.exe")
-            || ((p = getenv( "SteamGameId" )) && !strcmp( p, "2221490" ) && !strcmp( main_argv[1], "-public_key_store_address" ))
-       ))
-    {
-        FIXME( "HACK setting EN locale.\n" );
-        messages = "en-US";
-    }
-
     if (!unix_to_win_locale( messages, user_locale )) user_locale[0] = 0;
     TRACE_(nls)( "Unix LC_MESSAGES is %s, user system locale to %s\n", debugstr_a(messages), debugstr_a(user_locale) );
 

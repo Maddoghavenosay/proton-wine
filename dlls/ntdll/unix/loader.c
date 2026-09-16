@@ -549,8 +549,14 @@ static void preloader_exec( char **argv, WORD machine )
 {
 #ifdef HAVE_WINE_PRELOADER
 #if !defined(__arm__) && !defined(__aarch64__)
-    if (machine == IMAGE_FILE_MACHINE_AMD64)
-        asprintf( &argv[0], "%s64-preloader", argv[1] );
+    const char *p;
+
+    if (machine == IMAGE_FILE_MACHINE_AMD64
+        && ((p = remove_tail( argv[1], "x86_64-unix/wine" )) || (p = remove_tail( argv[1], "i386-unix/wine64" ))))
+    {
+        asprintf( &argv[0], "%si386-unix/wine64-preloader", p );
+        asprintf( &argv[1], "%si386-unix/wine64", p );
+    }
     else
 #endif
         asprintf( &argv[0], "%s-preloader", argv[1] );
@@ -599,7 +605,8 @@ NTSTATUS exec_wineloader( char **argv, int socketfd, const struct pe_image_info 
     char preloader_reserve[64], socket_env[64];
 
     if (pe_info->wine_fakedll) res_start = res_end = 0;
-    if (pe_info->image_flags & IMAGE_FLAGS_ComPlusNativeReady) machine = native_machine;
+    if (pe_info->image_flags & IMAGE_FLAGS_ComPlusNativeReady)
+        machine = is_machine_64bit( native_machine ) ? IMAGE_FILE_MACHINE_AMD64 : native_machine;
 
     unsetenv( "WINE_LD_PRELOAD" );
 
@@ -1862,7 +1869,7 @@ static NTSTATUS open_main_image( UNICODE_STRING *nt_name, void **module, SECTION
         status = virtual_map_module( mapping, module, &size, info, 0, 0, machine );
         if (status == STATUS_IMAGE_MACHINE_TYPE_MISMATCH && info->ComPlusNativeReady)
         {
-            info->Machine = native_machine;
+            info->Machine = is_machine_64bit( native_machine ) ? IMAGE_FILE_MACHINE_AMD64 : native_machine;
             status = STATUS_SUCCESS;
         }
         NtClose( mapping );
@@ -2299,7 +2306,10 @@ static void hacks_init(void)
         env_str = getenv("WINE_SIMULATE_ASYNC_READ");
         if (env_str)
             ac_odyssey = !!atoi(env_str);
-        else if (main_argc > 1 && (strstr(main_argv[1], "ACOdyssey.exe") || strstr(main_argv[1], "ImmortalsFenyxRising.exe")))
+        else if (main_argc > 1 && (strstr(main_argv[1], "ACOdyssey.exe")
+                                || strstr(main_argv[1], "ACValhalla.exe")
+                                || strstr(main_argv[1], "ACValhalla_plus.exe")
+                                || strstr(main_argv[1], "ImmortalsFenyxRising.exe")))
             ac_odyssey = TRUE;
 
         if (ac_odyssey)
@@ -2362,6 +2372,7 @@ static void hacks_init(void)
     case 212910: /* CoD Black Ops II Zombies */
     case 247910: /* Sniper Elite: Nazi Zombie Army 2 */
     case 227100: /* Sniper Elite: Nazi Zombie Army */
+    case 63380:  /* Sniper Elite: V2 */
         setenv( "WINESTEAMNOEXEC", "1", 0 );
         break;
     }
