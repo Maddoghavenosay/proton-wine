@@ -2,6 +2,100 @@
 
 Newest entry at the top.
 
+## 2026-09-15: Windows tells games the screen is in HDR, so their own HDR option stops being greyed out (versionCode 13)
+
+**Ask (user, 2026-09-15):** in-game HDR options are still greyed out on versionCode 11/12, whose
+HDR10 EDID DXGI does read (`IDXGIOutput6::GetDesc1` returns the screen's real peak). Games do not
+decide from the EDID: they ask Windows whether the display is *in* HDR.
+
+**Root cause (source, and `re3.exe`'s import table):** the question is DisplayConfig's
+`DISPLAYCONFIG_DEVICE_INFO_GET_ADVANCED_COLOR_INFO` (`QueryDisplayConfig` +
+`DisplayConfigGetDeviceInfo`, both imported by the titles that grey the option out). win32u answers
+it at `dlls/win32u/sysparams.c:8150-8191` from `monitor->hdr_enabled`: advancedColorSupported and
+advancedColorEnabled 1 with bitsPerColorChannel 10 when it is set, 0/0/8 when it is not. Only a
+driver sets that flag. Proton's winex11 does — `dlls/winex11.drv/display.c:499`,
+`(env = getenv("DXVK_HDR")) && *env == '1'` (Proton `d33f47c489f`, CW-Bug-Id #22912) — and
+winewayland never did, so the flag was 0 on every monitor of every Wayland session. And it has to
+reach the **virtual desktop's** monitor, the same place the EDID had to reach in versionCode 11:
+`QueryDisplayConfig(QDC_ONLY_ACTIVE_PATHS)` returns only that monitor, and `add_virtual_source()`
+builds it from an all-zero `struct gdi_monitor`.
+
+### Fix (two commits)
+- `efec2d86a45` `dlls/winewayland.drv/display.c`: `wayland_add_device_monitor()` sets
+  `monitor.hdr_enabled` on the monitor that carries the EDID when **both** hold: `DXVK_HDR=1`,
+  read exactly as winex11 reads it so the two drivers gate this on the same thing (the app exports
+  it when HDR output is on for the session), and the EDID really describes HDR10 — the app gave a
+  peak luminance, so the CTA HDR Static Metadata Data Block carries one. Both are read once per
+  process in the existing `edid_hdr_init()` `pthread_once` (`hdr_output_enabled`,
+  `edid_hdr_has_peak`), not per monitor. An SDR screen gets no EDID from us at all, so it can never
+  claim advanced colour whatever `DXVK_HDR` says.
+- `4fc5781cf58` `dlls/win32u/sysparams.c`, exactly parallel to v11's `48fb81bc902`: `struct
+  device_manager_ctx` gets `primary_hdr_enabled`, `add_monitor()` captures it under the same
+  `ctx->is_primary` condition that captures `primary_edid`, `add_virtual_source()` assigns it next
+  to `monitor.edid`, `release_display_manager_ctx()` clears it. The carry is **narrower than the
+  driver flag**: it is kept only when that EDID really describes an HDR screen — new
+  `edid_describes_hdr_screen()` walks the CTA-861 extension blocks for an HDR Static Metadata Data
+  Block (extended tag 0x06) that advertises SMPTE ST 2084. Reason (lead, 2026-09-15): win32u is
+  shared code, and winex11 sets `hdr_enabled` from `DXVK_HDR=1` alone with no EDID and no check, so
+  an unguarded carry would light advanced colour up for an X11 session whose user hand-set
+  `DXVK_HDR=1`, where nothing can present HDR — a washed-out picture with nothing in the log to
+  explain it. A driver that gives no EDID (every X11 session here) still changes nothing.
+- Deliberately **not** in this build: `GET_SDR_WHITE_LEVEL`, `SET_ADVANCED_COLOR_STATE` and the
+  `_2` variants — win32u still answers them `STATUS_INVALID_PARAMETER`. A second step only if
+  (a)+(b) prove insufficient on device.
+
+### Diagnostics (MESSAGE level, reach wine_debug.log; only when the driver gave an EDID)
+- winewayland `report_edid_handoff()` now ends with the state, and with the reason when it is off:
+  `… hands win32u 256 bytes, advanced colour on (DXVK_HDR=1, HDR10 EDID)` ·
+  `… advanced colour off (DXVK_HDR is not 1)` · `… off (the EDID names no peak luminance)`.
+- win32u `report_monitor_edids()` names it per active monitor, read back after the registry round
+  trip: `active monitor DISPLAY\WAY0001\0000&0000: Device Parameters\EDID 256 bytes, advanced
+  colour on;`. That line is the proof the flag survived `write_monitor_to_registry()` →
+  `WINE_DEVPROPKEY_MONITOR_HDR_ENABLED` → `update_display_cache_from_registry()`.
+
+**Verification off-device:** `edid_describes_hdr_screen()` compiled (gcc `-Wall -Wextra`, no
+warning) and run against the EDID `wayland_edid_build()` actually produces: peak+avg+min and
+peak-only accepted; base block alone (128 bytes), no EDID, a CTA block with only the Colorimetry
+block, an HDR metadata block without the ST 2084 bit, a malformed data-block offset and a non-CTA
+extension block all refused (8/8).
+
+**Build:** branch `feat/wayland-hdr-advanced-color-v13` off v12 (`822c244556e`): `efec2d86a45`
+(winewayland), `4fc5781cf58` (win32u), `899618e8a8c` (ci versionCode 12 → 13 + one sentence per
+profile). CI run 35041126515 (workflow_dispatch on that branch, headSha `899618e8a8c` verified):
+✅ green, artifact `proton-arm64ec-sdk28` → `proton-11.0-2-arm64ec.wcp`, sha256
+`b8af5604354fd21dc275267d66c882a85242ae3cc8b6ac9804382ec87a519ec1` (117,453,492 B), profile
+`Proton 11.0-2.1-arm64ec` versionCode 13 (installs as `Proton-11.0-2.1-arm64ec-13` next to -12).
+Against the v12 wcp (`ef8df2d6…`): same 2,544 files; exactly three change size —
+`lib/wine/aarch64-unix/win32u.so` (+320 B), `lib/wine/aarch64-unix/winewayland.so` (+272 B) and
+`profile.json` (+521 B). The other 1,524 differing files are PEs, import archives and .sys/.cpl/.ocx
+with identical sizes (COFF timestamps and checksums); every other unix library — the eight Turnips,
+libEGL, libgallium, libwayland, libdrm — is byte-identical to v12. On-artifact markers: `DXVK_HDR`
+appears 3× in v13's `winewayland.so` and 0× in v12's; `advanced colour on (DXVK_HDR=1, HDR10 EDID)`
+and `off (DXVK_HDR is not 1)` are in `winewayland.so`, ` advanced colour %s;` in `win32u.so`.
+No release, tag or catalog change; not staged anywhere. This branch is stacked on
+`feat/wayland-ubwc-v12`, which is itself not merged into `feat/winewayland-desktop-11.0-2` yet —
+fast-forward both once the device test has spoken.
+
+**Device status: not device-proven.** What a device test should see, with HDR on for the session on
+an HDR10 phone: the two log lines above saying `advanced colour on`, and a game whose HDR option is
+now selectable (re3-class titles, God of War). On an SDR phone, and on any X11 session, both lines
+must keep saying `off` / be absent, and nothing may change.
+
+### Carry into v8 (all seven parents)
+- Cherry-pick `efec2d86a45` (winewayland) **and** `4fc5781cf58` (win32u) on top of v10's
+  `612401793ce` and v11's `48fb81bc902`. The four are one feature — the EDID, the EDID on the
+  virtual monitor, the flag, the flag on the virtual monitor — and either half of this pair alone
+  changes nothing a game can see.
+- `efec2d86a45` touches only `dlls/winewayland.drv/display.c`, inside v10/v11's hunks, so it goes
+  after them; Wayland-only, so it is inert on the parents that never load winewayland.drv.
+- `4fc5781cf58` touches only `dlls/win32u/sysparams.c` and applies to the X11-only parents too.
+  **X11 exposure to keep in mind there:** their winex11 sets `gdi_monitor.hdr_enabled` from
+  `DXVK_HDR=1` alone, so the `edid_describes_hdr_screen()` test in `add_monitor()` is the only
+  thing keeping an env-var-only claim off the virtual desktop's monitor. Do not drop it when
+  resolving conflicts, and re-check that the parent's `add_virtual_source()` still builds its
+  monitor from a zeroed `gdi_monitor`.
+- The CI commit `899618e8a8c` is NOT carried.
+
 ## 2026-09-15: zero-copy game buffers become UBWC where gralloc allows it (versionCode 12)
 
 **Why (Wayland performance audit, 2026-09-15, Phase 1 fix 2):** every zero-copy swapchain came
@@ -153,8 +247,11 @@ DXVK (2.4.1-gplasync and 3.1) logs `readMonitorEdidFromKey: Failed to get EDID r
   output's current mode, which is also the largest virtual mode).
 - `release_display_manager_ctx()` frees the copy.
 - No EDID from the driver (every X11 session, and Wayland without the HDR variables) = nothing
-  changes. hdr_enabled is not carried (winewayland never sets it; Proton's winex11 does from
-  DXVK_HDR=1, so carrying it would change X11 virtual desktops - left out on purpose).
+  changes. hdr_enabled is not carried here (winewayland never set it; Proton's winex11 does from
+  DXVK_HDR=1, so an unguarded carry would change X11 virtual desktops - left out on purpose).
+  **Done in versionCode 13** (`efec2d86a45` + `4fc5781cf58`): winewayland sets it, and the carry
+  onto the virtual monitor is guarded by the EDID really describing HDR10, so X11 sessions still
+  change nothing. Carry those two with this commit.
 
 ### Diagnostics (MESSAGE level, reach wine_debug.log; only when the driver gave an EDID)
 - winewayland `report_edid_handoff()` (`display.c`), once per process and again if the size or
@@ -304,7 +401,10 @@ syntax-check clean with gcc and with clang `--target=aarch64-linux-android28`, `
 - Optional, not in this build: Proton's winex11 sets `gdi_monitor.hdr_enabled` from DXVK_HDR=1
   (DisplayConfig ADVANCED_COLOR_INFO → advancedColorSupported/Enabled); winewayland never does.
   Parity would be one line in `wayland_add_device_monitor` (suggest: only when the EDID is given
-  AND DXVK_HDR=1). Not needed by DXVK or vkd3d-proton.
+  AND DXVK_HDR=1). Not needed by DXVK or vkd3d-proton. **Done in versionCode 13**
+  (`efec2d86a45` + `4fc5781cf58`), with exactly that gate plus the EDID having HDR10 metadata, and
+  with the flag carried onto the virtual desktop's monitor: it is what makes a game's *own* HDR
+  option selectable. Carry those two together with this commit and `48fb81bc902`.
 
 ## 2026-09-14: native OpenGL black with sound on phones with no DRM node (versionCode 9)
 
