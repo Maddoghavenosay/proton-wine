@@ -220,6 +220,12 @@ def main():
         report(b"WINE_NO_OPEN_FILE_SEARCH" in ntdll_so, "ntdll.so: pso2 hack")
         report(b"Star Citizen" in read(os.path.join(pe, "user32.dll")), "user32.dll: Star Citizen msgbox silence")
         report(b"EAC_LAUNCHERDIR" in ntdll_so, "ntdll.so: EAC 60101 timeout")
+        report(b"WINE_BLACK_DESERT_KEEP_FULLSCREEN" in w32so, "win32u.so: Black Desert keep-fullscreen (GE 11-7)")
+        report(b"DragonAgeInquis" in w32so, "win32u.so: Dragon Age: Inquisition xinput focus fix (dai_xinput)")
+        report(u16("maxpayne.exe") in read(os.path.join(pe32, "ntdll.dll")),
+               "i386 ntdll.dll: Max Payne CPUID leaf fix (GE 11-7, active under WoW64)")
+        report(b"244210" in read(os.path.join(pe, "dwrite.dll")), "dwrite.dll: Assetto Corsa HUD (GE 11-7 dwrite rewrite)")
+        report(u16("218210") in read(os.path.join(pe, "kernelbase.dll")), "kernelbase.dll: Vanguard Saga of Heroes cwd fix")
 
     print("== verify-layer: %s" % ("PASS" if fails == 0 else "%d FATAL check(s)" % fails))
     return 0 if fails == 0 else 1
