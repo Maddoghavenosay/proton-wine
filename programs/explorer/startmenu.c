@@ -572,6 +572,7 @@ void do_startmenu(HWND hwnd)
 #define XP_MAX_RECENT    6
 #define XP_MAX_SHORTCUTS 64
 #define IDI_SHELL_RUN_ID 25   /* "Run" icon in shell32 */
+#define IDI_SHELL_CONTROL_PANEL_ID 36   /* "Control Panel" icon in shell32, the one control.exe's window uses */
 
 enum xp_action
 {
@@ -903,6 +904,24 @@ static void xp_add_folder( BOOL bold, UINT string_id, int csidl )
     item->icon = xp_icon_from_csidl( csidl );
 }
 
+/* The Control Panel folder (CSIDL_CONTROLS) is a shell namespace object: ShellExecute can only
+ * hand it to a new explorer.exe as "::{20D04FE0-...}\::{21EC2020-...}", and its CLSID has no
+ * DefaultIcon, so it gets a plain folder icon. Start Wine's Control Panel program instead, with
+ * the Control Panel icon; keep the folder only if control.exe is missing. */
+static void xp_add_control_panel(void)
+{
+    WCHAR path[MAX_PATH];
+    HICON icon = NULL;
+
+    if (!xp_find_program( L"control.exe", path ))
+    {
+        xp_add_folder( FALSE, IDS_XP_CONTROL_PANEL, CSIDL_CONTROLS );
+        return;
+    }
+    ExtractIconExW( L"shell32.dll", -IDI_SHELL_CONTROL_PANEL_ID, &icon, NULL, 1 );
+    xp_add_program( TRUE, FALSE, IDS_XP_CONTROL_PANEL, path, icon );
+}
+
 static int __cdecl xp_compare_items( const void *a, const void *b )
 {
     return lstrcmpiW( ((const struct xp_item *)a)->text, ((const struct xp_item *)b)->text );
@@ -1000,7 +1019,7 @@ static void xp_build_items(void)
     else
         xp_add_folder( TRUE, IDS_XP_MY_COMPUTER, CSIDL_DRIVES );
     xp_add( XP_ACTION_SEPARATOR, TRUE, FALSE, 0 );
-    xp_add_folder( FALSE, IDS_XP_CONTROL_PANEL, CSIDL_CONTROLS );
+    xp_add_control_panel();
     xp_add_system_program( TRUE, FALSE, IDS_TASK_MANAGER, L"taskmgr.exe" );
     xp_add_system_program( TRUE, FALSE, IDS_XP_WINECFG, L"winecfg.exe" );
     xp_add( XP_ACTION_SEPARATOR, TRUE, FALSE, 0 );
