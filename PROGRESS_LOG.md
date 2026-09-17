@@ -1,6 +1,19 @@
-# proton-wine PROGRESS_LOG (branch `feat/winewayland-desktop-11.0-2`)
+# proton-wine PROGRESS_LOG (branch `proton_11.0-2` — Wayland v8 base)
 
 Newest entry at the top.
+
+## 2026-09-16: Wayland v16 line merged into proton_11.0-2 (v8 base) — commit `234bdd0050b`
+
+- `--no-ff` merge (parents: `777342a9618` proton_11.0-2 + `133433d2240` `feat/wayland-hdr-ags-v16`), pushed to
+  `origin/proton_11.0-2`; CI run **35219499413** fired (in_progress at log time).
+- One conflict in `build-scripts/build-step-arm64ec.sh`: the parent's fail-hard MARKERS array (20 rows) vs
+  v16's AGS source checks. Resolved by keeping the array and folding v16's two AGS rows in
+  (`dlls/amd_ags_x64/unixlib.c|__ANDROID__`, `...|STATUS_NOT_IMPLEMENTED`). `bash -n` clean.
+- Audit: merged tree contains every v16 file; diff vs v16 == exactly the parent's 6-file CI-hardening set
+  (`.github/workflows/README.md`, `build-proton.yml`→`build-proton-11.0-2.yml`, deleted `publish-p11-consolidated.yml`,
+  `build-step-arm64ec.sh`/`build-step-x86_64.sh`, `verify-layer.py`).
+- Identity NOT yet bumped: the merged workflow still stamps `versionName 11.0-2.1-*`, `versionCode 16`. The v8
+  rename (vn `11.0-2-arm64ec`, vc 8) is a separate later step, alongside porting the stack to the other layers.
 
 ## 2026-09-16: the builtin AGS was unreachable, and why — the copy beside the .exe always won (versionCode 16)
 
