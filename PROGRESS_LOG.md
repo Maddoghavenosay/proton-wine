@@ -2,6 +2,13 @@
 
 Newest entry at the top.
 
+## 2026-09-17: v8 identity applied (staging/proton_11.0-2/v8-rename)
+
+- Workflow `build-proton-11.0-2.yml` now stamps `versionName 11.0-2-${ARCH_NAME}` (was `11.0-2.1-*`)
+  and `versionCode 8` (was 16) in both the Proton and Wine profiles; description tagline shortened to
+  "Own layer line 11.0-2 (vc 8 - supersedes stock 11.0-2 and the v16 Wayland line)".
+- arm64ec-only for now (Wayland line is arm64ec-only; x86_64 leg deferred to the cross-layer v8 port step).
+
 ## 2026-09-16: Wayland v16 line merged into proton_11.0-2 (v8 base) — commit `234bdd0050b`
 
 - `--no-ff` merge (parents: `777342a9618` proton_11.0-2 + `133433d2240` `feat/wayland-hdr-ags-v16`), pushed to
