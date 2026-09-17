@@ -232,9 +232,9 @@ jobs:
           cat > $GITHUB_WORKSPACE/profile-wine.json << EOF
           {
             "type": "Wine",
-            "versionName": "11.0-1-${ARCH_NAME}",
+            "versionName": "11.0-3-${ARCH_NAME}",
             "versionCode": 8,
-            "description": "Proton 11.0-1 ${ARCH_NAME} (bionic) — stock Valve + fast-yield gate + FEX-unixlib loader. Wayland + HDR10 added.",
+            "description": "Proton 11.0-3 ${ARCH_NAME} (bionic) — Valve + fast-yield gate + FEX-unixlib loader + xrandr/xrender + GE-Proton11-3 game-fixes (battlenet, maplestory, dai_xinput, eac, pso2, assettocorsa, silence-starcitizen, vgsoh, WM_ACTIVATEAPP) + DirectAudio v1.3.2 (opt-in: registry Audio=directaudio; pulse/alsa stay default). Superset of GE-Proton11-3. Wayland + HDR10 added.",
             "files": [],
             "wine": {
               "binPath": "bin",
@@ -272,8 +272,8 @@ jobs:
           
           # Create Wine WCP for CMOD & Ludashi - wcp.xz format
           cp $GITHUB_WORKSPACE/profile-wine.json profile.json
-          tar cJf proton-wine-11.0-1-$ARCH_NAME.wcp.xz bin lib share prefixPack.txz profile.json
-          mv proton-wine-11.0-1-$ARCH_NAME.wcp.xz $GITHUB_WORKSPACE/
+          tar cJf proton-wine-11.0-3-$ARCH_NAME.wcp.xz bin lib share prefixPack.txz profile.json
+          mv proton-wine-11.0-3-$ARCH_NAME.wcp.xz $GITHUB_WORKSPACE/
       
       # The packaged archive must carry exactly what the app's ContentsManager expects.
       - name: Verify wcp archives
@@ -326,7 +326,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: proton-wine-${{ env.ARCH_NAME }}-sdk${{ matrix.api_level }}
-          path: proton-wine-11.0-1-${{ env.ARCH_NAME }}.wcp.xz
+          path: proton-wine-11.0-3-${{ env.ARCH_NAME }}.wcp.xz
           retention-days: 30
   
   release:
@@ -384,7 +384,7 @@ jobs:
             - `GE-proton-11.0-3-arm64ec.wcp` - For GameNative
             
             **Wine Type:**
-            - `proton-wine-11.0-1-x86_64.wcp.xz` - For Winlator for CMOD & Ludashi
-            - `proton-wine-11.0-1-arm64ec.wcp.xz` - For Winlator for CMOD & Ludashi
+            - `proton-wine-11.0-3-x86_64.wcp.xz` - For Winlator for CMOD & Ludashi
+            - `proton-wine-11.0-3-arm64ec.wcp.xz` - For Winlator for CMOD & Ludashi
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
