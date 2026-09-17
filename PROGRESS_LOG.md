@@ -2,6 +2,71 @@
 
 Newest entry at the top.
 
+## 2026-09-17: Wayland v8 ported to the six remaining 11.x layers (staging/<layer>/v8-wayland)
+
+The v8 base (`proton_11.0-2` @ `ac1fe84df3d`) was replayed onto all six other 11.x layer lines.
+Each port is a single commit on `staging/<layer>/v8-wayland`, a clean +1 fast-forward over its parent.
+
+| layer | staging tip | CI run | wcp identity |
+| --- | --- | --- | --- |
+| `proton_11.0` | `e5fa703ed7f` | 35248712888 | `11.0-1-arm64ec` vc 8 |
+| `proton_11.3-GE` | `d46dfe15c4b` | 35248917771 | `11.0-3-arm64ec` vc 8 |
+| `proton_11.5-GE` | `9ae118410b9` | 35249104592 | `11.0-5-arm64ec` vc 8 |
+| `proton_11.6-GE` | `523d48bc7c9` | 35249230572 | `11.0-6-arm64ec` vc 8 |
+| `proton_11.7-GE` | `807734e65c8` | 35249378639 | `11.0-7-arm64ec` vc 8 (+ x86_64 leg) |
+| `proton_11.7.1-GE` | `f8d48977dce` | 35249628060 | `11.0-7.1-arm64ec` vc 8 (+ x86_64 leg) |
+
+### Port shape
+- Delta = **366 files**: ~340 Wayland/Turnip dependency files + 25 source files + the per-branch workflow.
+- `dlls/winewayland.drv/` is **byte-identical** between the pre-Wayland `proton_11.0-2` base and every
+  11.x layer, so the driver source applied unchanged; only `win32u`/`ntdll` differed (1 line).
+- Per-layer workflow edits mirrored from the v8 base: apt `libwayland-bin`, `versionCode` -> 8 on both
+  the Proton and Wine profile blocks, the v8 short description, the `winewayland-files` packaging loop,
+  and a `winewayland-${ARCH_NAME}` upload step.
+
+### Conflicts resolved (2, both real)
+1. **`dlls/amd_ags_x64/amd_ags_x64_main.c`** — on `proton_11.0` and the GE layers, which had locally
+   removed the vkd3d-ext `uavSlot` from the DX12 create-device TRACE. Resolution: keep the layer's
+   TRACE wording, add v8's `report_call` diagnostics. (`proton_11.7.1-GE` keeps the vkd3d ext — its
+   newer base never dropped it — and applied cleanly.)
+2. **`dlls/win32u/vulkan.c`** on `proton_11.7.1-GE` only, which sits on Valve `46b29104` and has a
+   signaller-thread path the `74e9e80fb0` base lacks. Resolution: keep 11.7.1's signaller-thread
+   shutdown + fence-op free, then apply v8's reorder (drop bookkeeping **before** destroy, ERR tracing).
+
+### x86_64 legs
+`proton_11.7-GE` and `proton_11.7.1-GE` keep their box64 legs. winewayland is arm64ec-only, so the
+Wayland upload step is guarded with `if: matrix.arch == 'aarch64'` (an unguarded
+`if-no-files-found: error` would fail the x86_64 job on an empty folder). The x86_64 DESC keeps its
+box64 text and does **not** claim Wayland; it still moves to vc 8.
+
+### Verification
+- All six runs **success**; `verify-layer: PASS` on every leg; `winewayland-arm64ec` uploaded on all six.
+- wcps re-verified off-CI: zstd integrity, `profile.json` identity (`vc 8`, per-layer versionName),
+  `winewayland.so` + `winewayland.drv` (aarch64-windows and i386-windows) present, 8 Wayland Turnip ICDs.
+- Staged to the device under `/sdcard/Download/`; sha256s recorded alongside.
+
+### Follow-up: Wine profile identity corrected (staging/<layer>/v8-wine-label)
+The **Wine** profile block on `11.3-GE`, `11.5-GE`, `11.6-GE`, `11.7-GE` still carried the copy-pasted
+`11.0-1` values — `versionName`, `description` and the `proton-wine-11.0-1-$ARCH_NAME.wcp.xz` filename —
+so four layers emitted their Wine component under `proton_11.0`'s name. This port had moved them vc 0 -> 8,
+which would have made four different trees collide on one identity. Corrected to each layer's own slot:
+
+| layer | Wine versionName | Wine description | wcp filename |
+| --- | --- | --- | --- |
+| `proton_11.3-GE` `4eac68edde4` | `11.0-3-${ARCH_NAME}` | = its Proton description | `proton-wine-11.0-3-*` |
+| `proton_11.5-GE` `132ac014f64` | `11.0-5-${ARCH_NAME}` | = its Proton description | `proton-wine-11.0-5-*` |
+| `proton_11.6-GE` `f6031f6b00f` | `11.0-6-${ARCH_NAME}` | = its Proton description | `proton-wine-11.0-6-*` |
+| `proton_11.7-GE` `340a1f0e9cb` | `11.0-7-${ARCH_NAME}` | `${DESC}` (per-arch, as its Proton block) | `proton-wine-11.0-7-*` |
+
+`proton_11.0` (genuinely 11.0-1), `proton_11.0-2` and `proton_11.7.1-GE` were already correct.
+The Proton profile and the layer wcp are untouched by this — the Wine block only feeds the separate
+`proton-wine-*.wcp.xz`, so the six layer wcps staged above remain valid.
+
+### Known, not fixed here
+- **Not yet on v8:** `proton_10.0` (10.0-4, vc 7), `proton_10.34-GE` (10.0-34, vc 7),
+  `proton_11.0-cachyos` (vc 1), and `proton_11.0-2`'s x86_64 leg (matrix is aarch64-only). The 10.x
+  pair share no merge-base with the 11.x line — a separate port, not a repeat of this one.
+
 ## 2026-09-17: v8 identity applied (staging/proton_11.0-2/v8-rename)
 
 - Workflow `build-proton-11.0-2.yml` now stamps `versionName 11.0-2-${ARCH_NAME}` (was `11.0-2.1-*`)
