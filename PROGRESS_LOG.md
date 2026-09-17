@@ -2,6 +2,37 @@
 
 Newest entry at the top.
 
+## 2026-09-17: CachyOS ported to v8 (`proton_11.0-cachyos` @ `4fadabecc77`)
+
+Same canonical payload as the six 11.x layers (366 files). CachyOS is Wine 11.0 at
+**`WINE_GDI_DRIVER_VERSION` 109 — identical to the v8 base** — and shares a merge-base
+(`79604fd6795b`), so the Wayland driver applies. Its `winewayland.drv` is ahead of the base on its own
+upstream work, so five files needed a real merge rather than a clean apply:
+
+- `Makefile.in`, `waylanddrv.h`, `wayland.c` — additive on both sides. CachyOS carries
+  `alpha-modifier-v1`, `color-management-v1` and `content-type-v1`; v8 adds `banner-desktop-v1`. Kept all.
+- `display.c` — `wayland_add_device_monitor` uses **both** CachyOS's `DXVK_HDR`/`DXVK_NO_HDR` env
+  override and v8's HDR10 EDID handoff. Kept both; v8's assignment stays last, matching the six.
+  Consequence: a real handoff overrides an explicit env setting. Same behaviour as the six layers.
+- `window.c` — the one with a compile trap. CachyOS's `wayland_win_data_create_wayland_surface` takes
+  **three** arguments (`data, toplevel_surface, owner_surface`); v8's code calls it with **two**. Kept
+  CachyOS's newer toplevel/owner model and its 3-arg signature, folded in v8's desktop-surface early
+  return, the `!desktop_mode` guard and the z-order reporting, and updated both v8 call sites
+  (including `(data, NULL)` -> `(data, NULL, NULL)`). A naive merge would not have compiled.
+
+Identity: `versionCode` 1 -> 8 on both profiles; `versionName 11.0-20260703-${ARCH_NAME}` keeps its own
+slot. x86_64 (box64) leg retained, Wayland upload guarded `if: matrix.arch == 'aarch64'`.
+
+CI **35258322497** success on both legs, `verify-layer: PASS` on each. arm64ec wcp 117,669,994 B,
+sha256 `de9bcf78…8c16` (device copy matches CI exactly), 2600 entries, 3/3 winewayland files, 8 Wayland
+Turnips. x86_64 wcp 63,879,915 B vc 8, not staged.
+
+### Proton 10 — parked by the user
+`proton_10.0` (10.0-4) and `proton_10.34-GE` (10.0-34) are Wine 10.0 at driver version **102 vs 109**,
+with **no merge-base** against the 11.x line. Divergence on the v8 code files: `win32u/vulkan.c`
++1120/-3676, `sysparams.c` +269/-948, `winewayland.drv` +1720/-4485 over 24 files. That is a backport
+against an older driver interface, not a port. Deferred on the user's instruction.
+
 ## 2026-09-17: Wayland v8 ported to the six remaining 11.x layers (staging/<layer>/v8-wayland)
 
 The v8 base (`proton_11.0-2` @ `ac1fe84df3d`) was replayed onto all six other 11.x layer lines.
