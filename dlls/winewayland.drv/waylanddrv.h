@@ -34,6 +34,7 @@
 #else
 struct xkb_compose_table;
 #endif
+#include "banner-desktop-v1-client-protocol.h"
 #include "cursor-shape-v1-client-protocol.h"
 #include "pointer-constraints-unstable-v1-client-protocol.h"
 #include "relative-pointer-unstable-v1-client-protocol.h"
@@ -261,6 +262,7 @@ struct wayland
     struct wp_pointer_warp_v1 *wp_pointer_warp_v1;
     struct zwp_keyboard_shortcuts_inhibit_manager_v1* zwp_keyboard_shortcuts_inhibit_manager_v1;
     struct wp_alpha_modifier_v1 *wp_alpha_modifier_v1;
+    struct banner_desktop_v1 *banner_desktop_v1;
     struct wayland_seat seat;
     struct wayland_keyboard keyboard;
     struct wayland_pointer pointer;
@@ -535,6 +537,7 @@ struct wayland_win_data
     UINT32 alpha_multiplier;
 };
 
+BOOL wayland_desktop_mode(void);
 struct wayland_win_data *wayland_win_data_get(HWND hwnd);
 struct wayland_win_data *wayland_win_data_get_nolock(HWND hwnd);
 void wayland_win_data_release(struct wayland_win_data *data);
@@ -620,6 +623,7 @@ RGNDATA *get_region_data(HRGN region);
 LRESULT WAYLAND_ClipboardWindowProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam);
 BOOL WAYLAND_ClipCursor(const RECT *clip, BOOL reset);
 LRESULT WAYLAND_DesktopWindowProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp);
+void WAYLAND_SetDesktopWindow(HWND hwnd);
 void WAYLAND_DestroyWindow(HWND hwnd);
 void WAYLAND_FlashWindowEx(FLASHWINFO *info);
 BOOL WAYLAND_SetIMECompositionRect(HWND hwnd, RECT rect);
@@ -637,6 +641,7 @@ LRESULT WAYLAND_WindowMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp);
 void WAYLAND_WindowPosChanged(HWND hwnd, HWND insert_after, HWND owner_hint, UINT swp_flags,
                               const struct window_rects *new_rects, struct window_surface *surface);
 BOOL WAYLAND_WindowPosChanging(HWND hwnd, UINT swp_flags, BOOL shaped, const struct window_rects *rects);
+BOOL WAYLAND_ClipClientSurfaces(HWND hwnd);
 BOOL WAYLAND_CreateWindowSurface(HWND hwnd, BOOL layered, const RECT *surface_rect, struct window_surface **surface);
 BOOL WAYLAND_GetWindowStyleMasks(HWND hwnd,  UINT style, UINT ex_style, UINT *style_mask, UINT *ex_style_mask);
 BOOL WAYLAND_HasWindowManager(const char *name);

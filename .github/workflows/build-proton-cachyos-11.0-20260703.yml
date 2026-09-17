@@ -64,6 +64,7 @@ jobs:
             mingw-w64 \
             gcc-multilib \
             g++-multilib \
+            libwayland-bin \
             libfreetype6-dev \
             libfreetype6-dev:i386 \
             libpng-dev \
@@ -227,8 +228,8 @@ jobs:
             DESC_WINE="Proton-CachyOS 11.0-20260703 ${ARCH_NAME} (bionic, box64) EXPERIMENTAL — wine-cachyos b5f2dc7b590 + our full v7 Android stack. Runs x86_64 Wine through box64; Bannerlator/WinNative/Winlator-bionic; needs a fresh x86_64 container."
           else
             ARCH_NAME="arm64ec"
-            DESC="Proton-CachyOS 11.0-20260703 ${ARCH_NAME} (bionic) EXPERIMENTAL — ${BASE} + our full v7 Android stack: fast-yield gate + FEX-unixlib loader + esync + xrandr/xrender + XP desktop + xinput controller-dies fix + RtlIsEcCode guard + EA network fixes + realized-font-handle cap 32768 + DirectAudio v1.3.2 (ported to the CachyOS mmdevapi) + ${ANDROID_FIXES}. Bannerlator/WinNative/Winlator-bionic; needs a fresh arm64ec container."
-            DESC_WINE="Proton-CachyOS 11.0-20260703 ${ARCH_NAME} (bionic) EXPERIMENTAL — wine-cachyos b5f2dc7b590 + our full v7 Android stack. Bannerlator/WinNative/Winlator-bionic; needs a fresh arm64ec container."
+            DESC="Proton-CachyOS 11.0-20260703 ${ARCH_NAME} (bionic) EXPERIMENTAL — ${BASE} + our full v7 Android stack: fast-yield gate + FEX-unixlib loader + esync + xrandr/xrender + XP desktop + xinput controller-dies fix + RtlIsEcCode guard + EA network fixes + realized-font-handle cap 32768 + DirectAudio v1.3.2 (ported to the CachyOS mmdevapi) + ${ANDROID_FIXES}. Wayland + HDR10 added."
+            DESC_WINE="Proton-CachyOS 11.0-20260703 ${ARCH_NAME} (bionic) EXPERIMENTAL — wine-cachyos b5f2dc7b590 + our full v7 Android stack. Wayland + HDR10 added."
           fi
 
           # Generate Proton profile.json
@@ -236,7 +237,7 @@ jobs:
           {
             "type": "Proton",
             "versionName": "11.0-20260703-${ARCH_NAME}",
-            "versionCode": 1,
+            "versionCode": 8,
             "description": "${DESC}",
             "files": [],
             "wine": {
@@ -252,7 +253,7 @@ jobs:
           {
             "type": "Wine",
             "versionName": "11.0-20260703-${ARCH_NAME}",
-            "versionCode": 0,
+            "versionCode": 8,
             "description": "${DESC_WINE}",
             "files": [],
             "wine": {
@@ -278,6 +279,12 @@ jobs:
           # Create Proton WCP - zstd (tar.zst) for fast in-app install. The app's ContentsManager
           # tries XZ then falls back to ZSTD, so a zstd .wcp installs with no app change and decompresses
           # far faster than xz. -T0 = all cores, -19 = high ratio (small download).
+          # x86_64 (box64) leg has no winewayland, so its copy loop is a no-op.
+          for f in lib/wine/aarch64-unix/winewayland.so lib/wine/aarch64-windows/winewayland.drv \
+                   lib/wine/i386-windows/winewayland.drv; do
+            if [ -f "$f" ]; then mkdir -p "$GITHUB_WORKSPACE/winewayland-files/$(dirname "$f")"; cp "$f" "$GITHUB_WORKSPACE/winewayland-files/$f"; fi
+          done
+
           cp $GITHUB_WORKSPACE/prefixPack.txz .
           cp $GITHUB_WORKSPACE/profile.json .
 
@@ -357,6 +364,15 @@ jobs:
         with:
           name: proton-${{ env.ARCH_NAME }}-sdk${{ matrix.api_level }}
           path: proton-cachyos-11.0-20260703-${{ env.ARCH_NAME }}.wcp
+          retention-days: 30
+
+      - name: Upload Wayland driver for ${{ matrix.arch }}
+        if: matrix.arch == 'aarch64'
+        uses: actions/upload-artifact@v4
+        with:
+          name: winewayland-${{ env.ARCH_NAME }}
+          path: winewayland-files
+          if-no-files-found: error
           retention-days: 30
 
       - name: Upload Wine build artifacts for ${{ matrix.arch }} (sdk${{ matrix.api_level }})
