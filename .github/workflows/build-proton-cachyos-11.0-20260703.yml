@@ -18,7 +18,7 @@ on:
   push:
     # Self-builds on push to its own branch only: GitHub registers workflow_dispatch
     # only for workflows on the default branch, so a bare dispatch 404s here.
-    branches: [ 'wip/proton_11.0-cachyos' ]
+    branches: [ 'proton_11.0-cachyos', 'staging/proton_11.0-cachyos/**' ]
   workflow_dispatch:
 
 jobs:
