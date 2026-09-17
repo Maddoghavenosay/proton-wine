@@ -1,0 +1,72 @@
+name: Publish the versionCode 8 (Wayland + HDR10) layers pre-release
+
+# Server-side attach: every file is pulled from its own CI run artifact on the runner and
+# only attached if BOTH its sha256 and its profile.json versionName/versionCode match
+# assets.txt. Nothing is uploaded from a developer machine. Files already on the release
+# are never replaced.
+on:
+  push:
+    branches: [publish/v8-wayland]
+
+permissions:
+  contents: write
+  actions: read
+
+jobs:
+  publish:
+    runs-on: ubuntu-24.04
+    env:
+      GH_TOKEN: ${{ github.token }}
+      REPO: ${{ github.repository }}
+      TAG: build-bionic-layers-20260917-wayland-v8
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Fetch and verify every layer
+        run: |
+          set -euo pipefail
+          mkdir -p out
+          grep -v '^#' assets.txt | grep -v '^[[:space:]]*$' | while IFS='|' read -r run artifact file sha vname; do
+            echo "== $file (run $run, artifact $artifact)"
+            rm -rf dl && mkdir dl
+            gh run download "$run" -R "$REPO" -n "$artifact" -D dl
+            test -f "dl/$file"
+            echo "$sha  dl/$file" | sha256sum -c -
+            read -r got_vn got_vc < <(tar -I zstd -xOf "dl/$file" profile.json \
+              | python3 -c 'import json,sys; p=json.load(sys.stdin); print(p["versionName"], p["versionCode"])')
+            [ "$got_vn" = "$vname" ] || { echo "FATAL: versionName $got_vn != $vname"; exit 1; }
+            [ "$got_vc" = "8" ]      || { echo "FATAL: versionCode $got_vc != 8"; exit 1; }
+            case "$file" in
+              *arm64ec*)
+                for e in lib/wine/aarch64-unix/winewayland.so \
+                         lib/wine/aarch64-windows/winewayland.drv \
+                         lib/wine/i386-windows/winewayland.drv; do
+                  tar -I zstd -tf "dl/$file" | grep -qx -- "$e" || { echo "FATAL: $e missing from $file"; exit 1; }
+                done
+                echo "   winewayland 3/3 present" ;;
+              *x86_64*)
+                if tar -I zstd -tf "dl/$file" | grep -q 'winewayland'; then
+                  echo "FATAL: $file is an x86_64 layer but carries winewayland"; exit 1; fi
+                echo "   no winewayland (correct for box64)" ;;
+            esac
+            echo "   $got_vn vc$got_vc, $(stat -c %s "dl/$file") bytes — ok"
+            mv "dl/$file" out/
+          done
+          echo "== collected"; ls -l out
+
+      - name: Attach and set the notes
+        run: |
+          set -euo pipefail
+          have=$(gh release view "$TAG" -R "$REPO" --json assets --jq '.assets[].name')
+          for f in out/*.wcp; do
+            n=$(basename "$f")
+            if echo "$have" | grep -qx "$n"; then
+              echo "$n already attached, leaving it"
+            else
+              gh release upload "$TAG" -R "$REPO" "$f"
+            fi
+          done
+          gh release edit "$TAG" -R "$REPO" --notes-file body.md \
+            --title "GE-Proton 11.0-7.1 / 11.0-7 / 11.0-6 / 11.0-5 / 11.0-3 · Proton 11.0-2 / 11.0-1 · Proton-CachyOS — arm64ec + x86_64 bionic 20260917 (versionCode 8: Wayland + HDR10) [PRE-RELEASE]"
+          gh release view "$TAG" -R "$REPO" --json isPrerelease,assets \
+            --jq '"prerelease=\(.isPrerelease)", "assets=\(.assets|length)", (.assets[] | "\(.name)  \(.size)")'
