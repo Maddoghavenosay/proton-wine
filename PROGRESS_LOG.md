@@ -2,6 +2,37 @@
 
 Newest entry at the top.
 
+## 2026-09-17: x86_64 leg restored on proton_11.0-2 — the v8 set is complete (`d00527c9054`)
+
+V7 shipped three x86_64 layer rows. Two of them (`GE-Proton-11.0-7-x86_64`, `GE-Proton-11.0-7.1-x86_64`)
+rebuilt at vc 8 as part of the six-layer port, because those workflows keep both legs. **`Proton-11.0-2-x86_64`
+had no v8 counterpart** — the Wayland work had narrowed its matrix to `arch: [aarch64]`. Restored:
+
+- `arch: [aarch64, x86_64]` at `api_level: [28]` (what v7 shipped). Every x86_64 build-step branch was
+  still present in the workflow; only the matrix had been cut.
+- **Wayland upload guarded** `if: matrix.arch == 'aarch64'`. Its `if-no-files-found: error` would
+  otherwise fail the box64 job on an empty `winewayland-files`. Confirmed in the log: the step ran on
+  the aarch64 job only.
+- **Per-arch `${DESC}`.** The single shared description would have told x86_64 users the box64 layer had
+  Wayland and HDR10. The x86_64 leg now reads "(bionic, box64)", drops the arm64ec-only FEX-unixlib
+  loader, and makes no Wayland claim; the arm64ec text is unchanged.
+
+CI **35262398189** success on both legs, `verify-layer: PASS` on each.
+`proton-11.0-2-arm64ec.wcp` 117,540,380 B vc 8 (2599 entries, 3/3 winewayland) ·
+`proton-11.0-2-x86_64.wcp` 63,758,490 B vc 8 (2248 entries, 0 winewayland — correct).
+
+### Control Panel fix on the x86_64 legs — verified, not assumed
+The fix is `xp_add_control_panel()` in `programs/explorer/startmenu.c`, which came in with the v8
+payload, so it is in all nine v8 trees and compiles for both legs. Verified in the built binaries: the
+marker is the UTF-16 string `L"control.exe"`, and `lib/wine/x86_64-windows/explorer.exe` carries it with
+the same signature as the known-good arm64ec build. Both `control.exe` and `explorer.exe` ship in the
+x86_64 and i386 PE directories of every x86_64 wcp.
+
+### Complete v8 set staged on the device (12 wcps, `/sdcard/Download/`)
+arm64ec: `11.0-1` `c7618ce7` · `11.0-2` `df6cc696` · `GE 11.0-3` `8e7008b4` · `GE 11.0-5` `f32fdfe9` ·
+`GE 11.0-6` `c7cf8513` · `GE 11.0-7` `f98a443d` · `GE 11.0-7.1` `638bd31c` · `CachyOS` `de9bcf78`
+x86_64: `11.0-2` `c7379ead` · `GE 11.0-7` `9e22e70b` · `GE 11.0-7.1` `48dcfa74` · `CachyOS` `ade66e65`
+
 ## 2026-09-17: CachyOS ported to v8 (`proton_11.0-cachyos` @ `4fadabecc77`)
 
 Same canonical payload as the six 11.x layers (366 files). CachyOS is Wine 11.0 at
