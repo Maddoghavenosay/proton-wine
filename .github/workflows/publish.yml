@@ -36,16 +36,19 @@ jobs:
               | python3 -c 'import json,sys; p=json.load(sys.stdin); print(p["versionName"], p["versionCode"])')
             [ "$got_vn" = "$vname" ] || { echo "FATAL: versionName $got_vn != $vname"; exit 1; }
             [ "$got_vc" = "8" ]      || { echo "FATAL: versionCode $got_vc != 8"; exit 1; }
+            # List once into a file. Piping tar into `grep -q` makes grep exit on the first
+            # match, tar take SIGPIPE, and pipefail report a failure for a check that passed.
+            tar -I zstd -tf "dl/$file" > lst.txt
             case "$file" in
               *arm64ec*)
                 for e in lib/wine/aarch64-unix/winewayland.so \
                          lib/wine/aarch64-windows/winewayland.drv \
                          lib/wine/i386-windows/winewayland.drv; do
-                  tar -I zstd -tf "dl/$file" | grep -qx -- "$e" || { echo "FATAL: $e missing from $file"; exit 1; }
+                  grep -qx -- "$e" lst.txt || { echo "FATAL: $e missing from $file"; exit 1; }
                 done
-                echo "   winewayland 3/3 present" ;;
+                echo "   winewayland 3/3 present, $(grep -c 'libvulkan_freedreno_wayland' lst.txt) Wayland Turnips" ;;
               *x86_64*)
-                if tar -I zstd -tf "dl/$file" | grep -q 'winewayland'; then
+                if grep -q 'winewayland' lst.txt; then
                   echo "FATAL: $file is an x86_64 layer but carries winewayland"; exit 1; fi
                 echo "   no winewayland (correct for box64)" ;;
             esac
