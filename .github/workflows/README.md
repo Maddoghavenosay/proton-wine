@@ -11,7 +11,9 @@ Each layer branch carries exactly one build workflow, named for the layer it bui
 | `proton_11.3-GE` | `build-ge-proton-11.0-3.yml` | GE-Proton 11.0-3 |
 | `proton_11.5-GE` | `build-ge-proton-11.0-5.yml` | GE-Proton 11.0-5 |
 | `proton_11.6-GE` | `build-ge-proton-11.0-6.yml` | GE-Proton 11.0-6 |
-| `wip/proton_11.0-cachyos` | `build-proton-cachyos-11.0-20260703.yml` | Proton-CachyOS 11.0-20260703 (experimental: wine-cachyos b5f2dc7b590 + the 11.0-2 layer stack, arm64ec + x86_64, push to its own branch) |
+| `proton_11.7-GE` | `build-ge-proton-11.0-7.yml` | GE-Proton 11.0-7 (arm64ec + x86_64) |
+| `proton_11.7.1-GE` | `build-ge-proton-11.0-7-valve.yml` | GE-Proton 11.0-7.1, new Valve base (arm64ec + x86_64) |
+| `proton_11.0-cachyos` | `build-proton-cachyos-11.0-20260703.yml` | Proton-CachyOS 11.0-20260703 (experimental: wine-cachyos b5f2dc7b590 + the 11.0-2 layer stack, arm64ec + x86_64, push to its own branch) |
 
 The file name is distinct per branch on purpose: GitHub labels a run with the
 workflow name taken from the default branch's copy of the same path, so a shared
