@@ -357,6 +357,11 @@ static void registry_handle_global(void *data, struct wl_registry *registry,
         process_wayland.wl_fixes = wl_registry_bind(registry, id, &wl_fixes_interface, 2);
     }
 #endif
+    else if (strcmp(interface, "banner_desktop_v1") == 0)
+    {
+        process_wayland.banner_desktop_v1 =
+            wl_registry_bind(registry, id, &banner_desktop_v1_interface, 1);
+    }
 }
 
 static void registry_handle_global_remove(void *data, struct wl_registry *registry,

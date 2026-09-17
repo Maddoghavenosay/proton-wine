@@ -70,6 +70,30 @@ export GSTREAMER_LIBS="-L$deps/lib -lgstgl-1.0 -lgstapp-1.0 -lgstvideo-1.0 -lgst
 export FFMPEG_CFLAGS="-I$deps/include/libavutil -I$deps/include/libavcodec -I$deps/include/libavformat"
 export FFMPEG_LIBS="-L$deps/lib -lavutil -lavcodec -lavformat"
 
+# Wayland driver deps (winewayland.drv). The bionic aarch64 libs+headers are vendored in
+# android/wayland-deps and staged into $deps by the workflow. Like the other deps above we
+# set *_CFLAGS/_LIBS explicitly so configure uses them directly instead of pkg-config (whose
+# .pc prefix points at an absolute Termux path that doesn't exist on the CI host). The host
+# wayland-scanner (x86_64) is found on PATH via AC_PATH_PROG.
+export WAYLAND_CLIENT_CFLAGS="-I$deps/include"
+export WAYLAND_CLIENT_LIBS="-L$deps/lib -lwayland-client"
+export WAYLAND_EGL_CFLAGS="-I$deps/include"
+export WAYLAND_EGL_LIBS="-L$deps/lib -lwayland-egl"
+export XKBCOMMON_CFLAGS="-I$deps/include"
+export XKBCOMMON_LIBS="-L$deps/lib -lxkbcommon"
+export XKBREGISTRY_CFLAGS="-I$deps/include"
+export XKBREGISTRY_LIBS="-L$deps/lib -lxkbregistry"
+
+# Stage the vendored wayland/xkb bionic deps into the sysroot (idempotent; only if present so
+# a stripped checkout still builds the non-wayland path).
+_WLD="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/android/wayland-deps/usr"
+if [ -d "$_WLD" ]; then
+  mkdir -p "$deps/lib/pkgconfig" "$deps/include"
+  cp -rn "$_WLD/lib/." "$deps/lib/" 2>/dev/null || true
+  cp -rn "$_WLD/include/." "$deps/include/" 2>/dev/null || true
+  echo "Staged vendored wayland/xkb deps into $deps"
+fi
+
 for arg in "$@"
 do
   if [ "$arg" == "--enable-16kb-pages" ];
@@ -120,7 +144,6 @@ do
       --enable-win64 \
       --disable-win16 \
       --enable-nls \
-      --disable-amd_ags_x64 \
       --enable-wineandroid_drv=no \
       --disable-tests \
       --with-alsa \
@@ -158,7 +181,7 @@ do
       --without-v4l2 \
       --without-vosk \
       --with-vulkan \
-      --without-wayland \
+      --with-wayland \
       --without-xcomposite \
       --without-xfixes \
       --without-xinerama \
@@ -329,6 +352,9 @@ do
       "server/esync.c|esync: up and running|esync server side re-added to Wine-11"
       "dlls/gdiplus/region.c|if (x1_min <= x) x1_min = x + 1;|gdiplus degenerate-span clamp (EA installer wizard)"
       "dlls/ntdll/unix/loader.c|load_unixlib_by_name|FEX unixlib load-by-name loader"
+
+      "dlls/amd_ags_x64/unixlib.c|__ANDROID__|AGS unixlib Android guard (builtin AGS on bionic)"
+      "dlls/amd_ags_x64/unixlib.c|STATUS_NOT_IMPLEMENTED|AGS Android unix_call table populated (not empty)"
     )
     for row in "${MARKERS[@]}"; do
       m_file="${row%%|*}"; rest="${row#*|}"; m_token="${rest%%|*}"; m_what="${rest#*|}"
@@ -339,6 +365,7 @@ do
         verify_fail=1
       fi
     done
+
     if [ "$verify_fail" != "0" ]; then
       echo "FATAL: one or more shipped features are missing from the source tree; refusing to build a silently-broken layer."
       exit 1
@@ -380,6 +407,59 @@ do
     cp -r $install_dir/bin/notepad $OUTPUT_DIR/bin
     cp -r $install_dir/lib/wine  $OUTPUT_DIR/lib
     cp -r $install_dir/share/wine  $OUTPUT_DIR/share
+
+    # A layer without amd_ags_x64.dll leaves every game that links AGS on its own bundled copy,
+    # which on a non-AMD GPU reports no display at all - and with it no HDR10. The module is
+    # built as x64 code under arm64ec (#pragma makedep arm64ec_x64), so it lands in the aarch64
+    # PE dir like the rest. Fail here rather than ship a layer that silently lost it again.
+    if ! ls "$OUTPUT_DIR"/lib/wine/*/amd_ags_x64.dll >/dev/null 2>&1; then
+      echo "FATAL: amd_ags_x64.dll is not in the built layer (the builtin AGS did not build)" >&2
+      exit 1
+    fi
+    echo "amd_ags_x64.dll present: $(ls "$OUTPUT_DIR"/lib/wine/*/amd_ags_x64.dll)"
+
+    # Bundle winewayland.so's runtime deps into the wcp lib/ so the driver can load even where
+    # the imagefs doesn't (yet) ship them. Vendored bionic aarch64 libs from android/wayland-deps.
+    _WLD="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/android/wayland-deps/usr/lib"
+    if [ -d "$_WLD" ]; then
+      cp -n "$_WLD"/libwayland-client.so "$_WLD"/libwayland-egl.so \
+            "$_WLD"/libxkbcommon.so "$_WLD"/libxkbregistry.so "$OUTPUT_DIR/lib/" 2>/dev/null || true
+      # Our Wayland Turnip links libdrm (its Wayland WSI needs the DRM image path); the imagefs has
+      # one, but ship the copy it was built against so the ICD never depends on that.
+      [ -f "$_WLD"/libdrm.so ] && cp -n "$_WLD"/libdrm.so "$OUTPUT_DIR/lib/" 2>/dev/null || true
+      echo "Bundled wayland/xkb runtime libs into wcp lib/"
+      # Wayland-capable Turnips (our Banners-Turnip `wayland` build, see android/wayland-deps/TURNIP.md):
+      # the plain driver plus the Adreno 7xx (710/720/722), the two WN-Turnip 8xx tunings (Balanced,
+      # Performance), the gen8 8xx build, StevenMXZ's Gen8 V36, whitebelyash's Mainline v31 and pure
+      # upstream main, each with its ICD manifest. winewayland picks one on the Bannerlator compositor
+      # (BANNER_WAYLAND_VK_VARIANT / BANNER_WAYLAND_VK_ICD); lib/libvulkan_freedreno_wayland.so is
+      # what the app checks for. All eight ship or the build fails: a wcp missing a variant would
+      # silently render 710/720 or 8xx devices on the plain driver, which cannot create a device there.
+      if [ -f "$_WLD"/libvulkan_freedreno_wayland.so ]; then
+        mkdir -p "$OUTPUT_DIR/share/vulkan/icd.d"
+        for v in "" _a7xx _a8xx _a8xx_perf _a8xx_gen8 _a8xx_smxz _a8xx_white _a8xx_upstream; do
+          [ -f "$_WLD/libvulkan_freedreno_wayland$v.so" ] && [ -f "$_WLD/../share/vulkan/icd.d/banner_wayland_turnip$v.json" ] \
+            || { echo "ERROR: Wayland Turnip variant '$v' (libvulkan_freedreno_wayland$v.so + banner_wayland_turnip$v.json) missing from android/wayland-deps" >&2; exit 1; }
+          cp "$_WLD/libvulkan_freedreno_wayland$v.so" "$OUTPUT_DIR/lib/"
+          cp "$_WLD/../share/vulkan/icd.d/banner_wayland_turnip$v.json" "$OUTPUT_DIR/share/vulkan/icd.d/"
+        done
+        echo "Bundled the Wayland Turnip ICDs (plain, a7xx, a8xx, a8xx_perf, a8xx_gen8, a8xx_smxz, a8xx_white, a8xx_upstream) into wcp"
+      fi
+      # xkeyboard-config data for the bundled libxkbregistry/libxkbcommon (XKB-SOURCE.md next to it):
+      # winewayland sets XKB_CONFIG_ROOT to it so layouts get their real names.
+      if [ -f "$_WLD"/../share/X11/xkb/rules/evdev.xml ]; then
+        mkdir -p "$OUTPUT_DIR/share/X11"
+        cp -r "$_WLD"/../share/X11/xkb "$OUTPUT_DIR/share/X11/"
+        echo "Bundled xkeyboard-config into wcp share/X11/xkb ($(du -sh "$OUTPUT_DIR/share/X11/xkb" | cut -f1))"
+      fi
+      # Mesa's EGL (Wayland platform) + Zink for OpenGL, from the same build as that Turnip,
+      # with the libwayland-server its EGL links.
+      if [ -f "$_WLD"/libEGL.so.1 ]; then
+        cp "$_WLD"/libEGL.so.1 "$_WLD"/libGLESv2.so.2 "$_WLD"/libgallium-*.so \
+           "$OUTPUT_DIR/lib/"
+        echo "Bundled Mesa EGL + Zink into wcp"
+      fi
+    fi
 
     # Strip the packaged binaries to shrink the tree. llvm-strip ($STRIP) is arm64ec/COFF-aware AND
     # handles ELF, so it strips both the PE DLLs/EXEs and the unix .so loaders. --strip-all keeps the

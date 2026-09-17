@@ -1690,7 +1690,7 @@ void set_client_surface(HWND hwnd, struct wayland_client_surface *new_client)
     HWND toplevel = NtUserGetAncestor(hwnd, GA_ROOT);
     struct wayland_client_surface *old_client;
     struct wayland_win_data *data;
-    BOOL visible = FALSE, offscreen = FALSE;
+    BOOL visible = FALSE, offscreen = FALSE, placed = FALSE;
 
     /* ownership is shared with the callers, the last caller to release
      * its reference will also destroy it and clear our pointer. */
@@ -1711,10 +1711,18 @@ void set_client_surface(HWND hwnd, struct wayland_client_surface *new_client)
             wayland_client_surface_attach(old_client, NULL);
 
         if ((data->client_surface = new_client))
+        {
+            /* On the virtual desktop a top-level window drawn only through the
+             * new client surface may have no surface of its own yet; give it
+             * one to live in before attaching. */
+            if (toplevel == hwnd) placed = wayland_desktop_place_client_window(data);
             wayland_client_surface_attach(new_client, visible ? toplevel : NULL);
+        }
     }
 
     wayland_win_data_release(data);
+
+    if (placed) wayland_desktop_zorder_changed();
 }
 
 static const struct client_surface_funcs wayland_client_surface_funcs =
