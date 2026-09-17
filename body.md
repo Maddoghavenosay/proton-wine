@@ -20,38 +20,224 @@ Consolidated build of the Proton / GE-Proton layers at **versionCode 8**, rebuil
 
 **Scope of the changes versus v7:** the `winewayland.drv` driver and its Wayland protocol sources, `win32u` (display, vulkan surface and window handling), `winevulkan`, `ntdll`'s loader, `amd_ags_x64` (HDR/AGS reporting), `explorer`, the wserver window-station code, and the bundled Wayland Turnip drivers and their loader libraries. No FEX, DXVK, audio or input changes.
 
-## Layers in this release
-
-| Layer | Base | Installs as | Asset |
-|---|---|---|---|
-| **Proton 11.0-1** | Valve [Proton 11.0-1](https://github.com/ValveSoftware/Proton/releases/tag/proton-11.0-1) (Wine 11.0) | `11.0-1-arm64ec-8` | `proton-11.0-1-arm64ec.wcp` |
-| **Proton 11.0-2** | Valve Proton 11.0-2 (Wine 11.0) — the Wayland/HDR base line | `11.0-2-arm64ec-8` · `11.0-2-x86_64-8` | `proton-11.0-2-arm64ec.wcp` · `proton-11.0-2-x86_64.wcp` |
-| **GE-Proton 11.0-3** | GE [GE-Proton11-3](https://github.com/GloriousEggroll/proton-ge-custom/releases/tag/GE-Proton11-3) tier on Valve 11.0-1 | `11.0-3-arm64ec-8` | `GE-proton-11.0-3-arm64ec.wcp` |
-| **GE-Proton 11.0-5** | GE [GE-Proton11-5](https://github.com/GloriousEggroll/proton-ge-custom/releases/tag/GE-Proton11-5) tier on Valve 11.0-1 | `11.0-5-arm64ec-8` | `GE-proton-11.0-5-arm64ec.wcp` |
-| **GE-Proton 11.0-6** | GE [GE-Proton11-6](https://github.com/GloriousEggroll/proton-ge-custom/releases/tag/GE-Proton11-6) tier on Valve 11.0-1 | `11.0-6-arm64ec-8` | `GE-proton-11.0-6-arm64ec.wcp` |
-| **GE-Proton 11.0-7** | GE [GE-Proton11-7](https://github.com/GloriousEggroll/proton-ge-custom/releases/tag/GE-Proton11-7) tier | `11.0-7-arm64ec-8` · `11.0-7-x86_64-8` | `GE-proton-11.0-7-arm64ec.wcp` · `GE-proton-11.0-7-x86_64.wcp` |
-| **GE-Proton 11.0-7.1** | GE-Proton11-7 tier on ValveSoftware/wine `46b29104` (bleeding-edge base) | `11.0-7.1-arm64ec-8` · `11.0-7.1-x86_64-8` | `GE-proton-11.0-7.1-arm64ec.wcp` · `GE-proton-11.0-7.1-x86_64.wcp` |
-| **Proton-CachyOS 11.0-20260703** | `wine-cachyos` `b5f2dc7b590` (Valve experimental-11.0 + CachyOS patches) | `11.0-20260703-arm64ec-8` · `11.0-20260703-x86_64-8` | `proton-cachyos-11.0-20260703-arm64ec.wcp` · `proton-cachyos-11.0-20260703-x86_64.wcp` |
-
-Every arm64ec layer carries the full Wayland + HDR10 stack. The four x86_64 (box64) layers carry everything except Wayland.
+## Layers
 
 <details>
-<summary><b>What the Wayland stack is, per layer</b> (tap to expand)</summary>
+<summary><b>GE-Proton 11.0-7.1</b> &nbsp;·&nbsp; arm64ec + <b>x86_64</b> · Wine 11 (bleeding-edge Valve base) · versionCode <code>8</code></summary>
 
 <br>
 
 | | |
 |---|---|
-| **Wine driver** | `lib/wine/aarch64-unix/winewayland.so` · `lib/wine/aarch64-windows/winewayland.drv` · `lib/wine/i386-windows/winewayland.drv` |
-| **Turnip drivers** | `libvulkan_freedreno_wayland{,_a7xx,_a8xx,_a8xx_perf,_a8xx_gen8,_a8xx_smxz,_a8xx_white,_a8xx_upstream}.so` with matching `banner_wayland_turnip*.json` ICDs |
-| **Wayland libs** | `libwayland-client.so` · `libwayland-egl.so` |
-| **HDR10** | built EDID (CTA-861.3) · DXGI · DisplayConfig advanced colour · builtin `amd_ags_x64` |
-| **Protocol** | `banner-desktop-v1` (the compositor's own protocol for desktop placement and stacking) |
+| **Base** | GloriousEggroll **[GE-Proton11-7](https://github.com/GloriousEggroll/proton-ge-custom/releases/tag/GE-Proton11-7)** game-fix tier on **ValveSoftware/wine `46b29104`** (bleeding-edge, 2026-09-15) |
+| **Installs as** | `11.0-7.1-arm64ec-8` · `11.0-7.1-x86_64-8` |
+| **Wayland** *(arm64ec only)* | `winewayland.drv` (unix `.so` + `aarch64-windows` and `i386-windows` PE) · 8 bundled Wayland Turnip drivers (`plain`, `a7xx`, `a8xx`, `a8xx-perf`, `a8xx-gen8`, `a8xx-smxz`, `a8xx-white`, `a8xx-upstream`) · `banner-desktop-v1` protocol |
+| **HDR10** *(arm64ec only)* | screen peak / frame-average / black level reported to Windows through a built CTA-861.3 EDID, DXGI and DisplayConfig advanced colour, plus the builtin `amd_ags_x64` |
+| **ntdll fix** | `RtlIsEcCode` bounds check (Denuvo unwind loop) |
+| **EA fixes** | ws2_32 dual-stack DNS · nsiproxy default route · gdiplus span clamp |
+| **DirectAudio** | v1.3.2 (vendored source) — opt-in via registry `Audio=directaudio`; mic capture opt-in via `BANNER_AUDIO_DIRECT_MIC=1` |
+| **XInput fix** | update thread survives transient wait failures (controllers no longer die mid-game) |
+| **Wine XP desktop** | Luna taskbar + start menu (with the Control Panel fix) · XP window frames · `winexp.msstyles` visual style — Blue / Olive Green / Silver, navy / moss / graphite in dark mode |
+| **Assets** | `GE-proton-11.0-7.1-arm64ec.wcp` · `GE-proton-11.0-7.1-x86_64.wcp` (4 KB + 16 KB pages) |
 
-The app detects Wayland capability by **files**, never by layer name, so the gate lights up on every layer here the moment it is installed.
+**Android compatibility fixes** — SD-card boot (`noexec` / `force_anon`) · drive-root copy · `C.UTF-8` locale
+**Runtime** — realized-font-handle cap `32768` · `WINEVMEMMAXSIZE` cap · fast-yield gate · FEX-unixlib loader · XRandR / XRender
+**Build** — `-g0 -O2` release build, `llvm-strip` on both the PE DLLs/EXEs and the unix `.so` loaders · zstd-compressed `.wcp` · ccache in CI (build speed only, not in the layer)
+**Inherited bionic base** — the Winlator-bionic / GameNative Android patch set every layer is built on: esync/fsync, winex11 driver (window/keyboard/mouse/OpenGL/bitblt), preloader, clipboard, winemenubuilder, MIDI, DNS resolver, wow64 syscall path
+**GE game-fixes** — `ai-limit` · `assettocorsa` · `black-desert` · `dai_xinput` · `eac` · `maplestory` · `max-payne` · `pso2` · `return-to-krondor` · `silence-starcitizen` · `vgsoh` · `WM_ACTIVATEAPP`
+
+> ℹ️ This layer keeps its own install slot (`11.0-7.1`) apart from the current-base GE 11.0-7, so the two can sit side by side. Its Wine base is newer than every other layer here, which is why its `win32u` needed a hand-merge to take the Wayland work.
+
+</details>
+
+<details>
+<summary><b>GE-Proton 11.0-7</b> &nbsp;·&nbsp; arm64ec + <b>x86_64</b> · Wine 11 · versionCode <code>8</code></summary>
+
+<br>
+
+| | |
+|---|---|
+| **Base** | GloriousEggroll **[GE-Proton11-7](https://github.com/GloriousEggroll/proton-ge-custom/releases/tag/GE-Proton11-7)** game-fix tier on Valve **[Proton 11.0-1](https://github.com/ValveSoftware/Proton/releases/tag/proton-11.0-1)** (Wine 11.0-1) |
+| **Installs as** | `11.0-7-arm64ec-8` · `11.0-7-x86_64-8` |
+| **Wayland** *(arm64ec only)* | `winewayland.drv` (unix `.so` + `aarch64-windows` and `i386-windows` PE) · 8 bundled Wayland Turnip drivers (`plain`, `a7xx`, `a8xx`, `a8xx-perf`, `a8xx-gen8`, `a8xx-smxz`, `a8xx-white`, `a8xx-upstream`) · `banner-desktop-v1` protocol |
+| **HDR10** *(arm64ec only)* | screen peak / frame-average / black level reported to Windows through a built CTA-861.3 EDID, DXGI and DisplayConfig advanced colour, plus the builtin `amd_ags_x64` |
+| **ntdll fix** | `RtlIsEcCode` bounds check (Denuvo unwind loop) |
+| **EA fixes** | ws2_32 dual-stack DNS · nsiproxy default route · gdiplus span clamp |
+| **DirectAudio** | v1.3.2 (vendored source) — opt-in via registry `Audio=directaudio`; mic capture opt-in via `BANNER_AUDIO_DIRECT_MIC=1` |
+| **XInput fix** | update thread survives transient wait failures (controllers no longer die mid-game) |
+| **Wine XP desktop** | Luna taskbar + start menu (with the Control Panel fix) · XP window frames · `winexp.msstyles` visual style — Blue / Olive Green / Silver, navy / moss / graphite in dark mode |
+| **Assets** | `GE-proton-11.0-7-arm64ec.wcp` · `GE-proton-11.0-7-x86_64.wcp` (4 KB + 16 KB pages) |
+
+**Android compatibility fixes** — SD-card boot (`noexec` / `force_anon`) · drive-root copy · `C.UTF-8` locale
+**Runtime** — realized-font-handle cap `32768` · `WINEVMEMMAXSIZE` cap · fast-yield gate · FEX-unixlib loader · XRandR / XRender
+**Build** — `-g0 -O2` release build, `llvm-strip` on both the PE DLLs/EXEs and the unix `.so` loaders · zstd-compressed `.wcp` · ccache in CI (build speed only, not in the layer)
+**Inherited bionic base** — the Winlator-bionic / GameNative Android patch set every layer is built on: esync/fsync, winex11 driver (window/keyboard/mouse/OpenGL/bitblt), preloader, clipboard, winemenubuilder, MIDI, DNS resolver, wow64 syscall path
+**GE game-fixes** — `maplestory` · `dai_xinput` · `eac` · `pso2` · `assettocorsa` · `silence-starcitizen` · `vgsoh` · `WM_ACTIVATEAPP` · `black-desert fullscreen` · `max-payne cpu detection` · `ai-limit dx12 compute fallback`
+
+</details>
+
+<details>
+<summary><b>GE-Proton 11.0-6</b> &nbsp;·&nbsp; arm64ec · Wine 11 · versionCode <code>8</code></summary>
+
+<br>
+
+| | |
+|---|---|
+| **Base** | GloriousEggroll **[GE-Proton11-6](https://github.com/GloriousEggroll/proton-ge-custom/releases/tag/GE-Proton11-6)** game-fix tier on Valve **[Proton 11.0-1](https://github.com/ValveSoftware/Proton/releases/tag/proton-11.0-1)** (Wine 11.0-1) |
+| **Installs as** | `11.0-6-arm64ec-8` |
+| **Wayland** | `winewayland.drv` (unix `.so` + `aarch64-windows` and `i386-windows` PE) · 8 bundled Wayland Turnip drivers (`plain`, `a7xx`, `a8xx`, `a8xx-perf`, `a8xx-gen8`, `a8xx-smxz`, `a8xx-white`, `a8xx-upstream`) · `banner-desktop-v1` protocol |
+| **HDR10** | screen peak / frame-average / black level reported to Windows through a built CTA-861.3 EDID, DXGI and DisplayConfig advanced colour, plus the builtin `amd_ags_x64` |
+| **ntdll fix** | `RtlIsEcCode` bounds check (Denuvo unwind loop) |
+| **EA fixes** | ws2_32 dual-stack DNS · nsiproxy default route · gdiplus span clamp |
+| **DirectAudio** | v1.3.2 (vendored source) — opt-in via registry `Audio=directaudio`; mic capture opt-in via `BANNER_AUDIO_DIRECT_MIC=1` |
+| **XInput fix** | update thread survives transient wait failures (controllers no longer die mid-game) |
+| **Wine XP desktop** | Luna taskbar + start menu (with the Control Panel fix) · XP window frames · `winexp.msstyles` visual style — Blue / Olive Green / Silver, navy / moss / graphite in dark mode |
+| **Assets** | `GE-proton-11.0-6-arm64ec.wcp` (4 KB + 16 KB pages) |
+
+**Android compatibility fixes** — SD-card boot (`noexec` / `force_anon`) · drive-root copy · `C.UTF-8` locale
+**Runtime** — realized-font-handle cap `32768` · `WINEVMEMMAXSIZE` cap · fast-yield gate · FEX-unixlib loader · XRandR / XRender
+**Build** — `-g0 -O2` release build, `llvm-strip` on both the PE DLLs/EXEs and the unix `.so` loaders · zstd-compressed `.wcp` · ccache in CI (build speed only, not in the layer)
+**Inherited bionic base** — the Winlator-bionic / GameNative Android patch set every layer is built on: esync/fsync, winex11 driver (window/keyboard/mouse/OpenGL/bitblt), preloader, clipboard, winemenubuilder, MIDI, DNS resolver, wow64 syscall path
+**GE game-fixes** — `maplestory` · `dai_xinput` · `eac` · `pso2` · `assettocorsa` · `silence-starcitizen` · `vgsoh` · `WM_ACTIVATEAPP`
+
+> ℹ️ GE dropped its `battlenet` workaround upstream in GE-Proton11-6, so this layer's game-fix set is the 11.0-5 tier minus `battlenet`. This is the layer the *NFS Heat* / Denuvo fix and the v7 Wine XP desktop were device-proven on.
+
+</details>
+
+<details>
+<summary><b>GE-Proton 11.0-5</b> &nbsp;·&nbsp; arm64ec · Wine 11 · versionCode <code>8</code></summary>
+
+<br>
+
+| | |
+|---|---|
+| **Base** | GloriousEggroll **[GE-Proton11-5](https://github.com/GloriousEggroll/proton-ge-custom/releases/tag/GE-Proton11-5)** game-fix tier on Valve **[Proton 11.0-1](https://github.com/ValveSoftware/Proton/releases/tag/proton-11.0-1)** (Wine 11.0-1) |
+| **Installs as** | `11.0-5-arm64ec-8` |
+| **Wayland** | `winewayland.drv` (unix `.so` + `aarch64-windows` and `i386-windows` PE) · 8 bundled Wayland Turnip drivers (`plain`, `a7xx`, `a8xx`, `a8xx-perf`, `a8xx-gen8`, `a8xx-smxz`, `a8xx-white`, `a8xx-upstream`) · `banner-desktop-v1` protocol |
+| **HDR10** | screen peak / frame-average / black level reported to Windows through a built CTA-861.3 EDID, DXGI and DisplayConfig advanced colour, plus the builtin `amd_ags_x64` |
+| **ntdll fix** | `RtlIsEcCode` bounds check (Denuvo unwind loop) |
+| **EA fixes** | ws2_32 dual-stack DNS · nsiproxy default route · gdiplus span clamp |
+| **DirectAudio** | v1.3.2 (vendored source) — opt-in via registry `Audio=directaudio`; mic capture opt-in via `BANNER_AUDIO_DIRECT_MIC=1` |
+| **XInput fix** | update thread survives transient wait failures (controllers no longer die mid-game) |
+| **Wine XP desktop** | Luna taskbar + start menu (with the Control Panel fix) · XP window frames · `winexp.msstyles` visual style — Blue / Olive Green / Silver, navy / moss / graphite in dark mode |
+| **Assets** | `GE-proton-11.0-5-arm64ec.wcp` (4 KB + 16 KB pages) |
+
+**Android compatibility fixes** — SD-card boot (`noexec` / `force_anon`) · drive-root copy · `C.UTF-8` locale
+**Runtime** — realized-font-handle cap `32768` · `WINEVMEMMAXSIZE` cap · fast-yield gate · FEX-unixlib loader · XRandR / XRender
+**Build** — `-g0 -O2` release build, `llvm-strip` on both the PE DLLs/EXEs and the unix `.so` loaders · zstd-compressed `.wcp` · ccache in CI (build speed only, not in the layer)
+**Inherited bionic base** — the Winlator-bionic / GameNative Android patch set every layer is built on: esync/fsync, winex11 driver (window/keyboard/mouse/OpenGL/bitblt), preloader, clipboard, winemenubuilder, MIDI, DNS resolver, wow64 syscall path
+**GE game-fixes** — `battlenet` · `maplestory` · `dai_xinput` · `eac` · `pso2` · `assettocorsa` · `silence-starcitizen` · `vgsoh` · `WM_ACTIVATEAPP`
+
+</details>
+
+<details>
+<summary><b>GE-Proton 11.0-3</b> &nbsp;·&nbsp; arm64ec · Wine 11 · versionCode <code>8</code></summary>
+
+<br>
+
+| | |
+|---|---|
+| **Base** | GloriousEggroll **[GE-Proton11-3](https://github.com/GloriousEggroll/proton-ge-custom/releases/tag/GE-Proton11-3)** game-fix tier on Valve **[Proton 11.0-1](https://github.com/ValveSoftware/Proton/releases/tag/proton-11.0-1)** (Wine 11.0-1) |
+| **Installs as** | `11.0-3-arm64ec-8` |
+| **Wayland** | `winewayland.drv` (unix `.so` + `aarch64-windows` and `i386-windows` PE) · 8 bundled Wayland Turnip drivers (`plain`, `a7xx`, `a8xx`, `a8xx-perf`, `a8xx-gen8`, `a8xx-smxz`, `a8xx-white`, `a8xx-upstream`) · `banner-desktop-v1` protocol |
+| **HDR10** | screen peak / frame-average / black level reported to Windows through a built CTA-861.3 EDID, DXGI and DisplayConfig advanced colour, plus the builtin `amd_ags_x64` |
+| **ntdll fix** | `RtlIsEcCode` bounds check (Denuvo unwind loop) |
+| **EA fixes** | ws2_32 dual-stack DNS · nsiproxy default route · gdiplus span clamp |
+| **DirectAudio** | v1.3.2 (vendored source) — opt-in via registry `Audio=directaudio`; mic capture opt-in via `BANNER_AUDIO_DIRECT_MIC=1` |
+| **XInput fix** | update thread survives transient wait failures (controllers no longer die mid-game) |
+| **Wine XP desktop** | Luna taskbar + start menu (with the Control Panel fix) · XP window frames · `winexp.msstyles` visual style — Blue / Olive Green / Silver, navy / moss / graphite in dark mode |
+| **Assets** | `GE-proton-11.0-3-arm64ec.wcp` (4 KB + 16 KB pages) |
+
+**Android compatibility fixes** — SD-card boot (`noexec` / `force_anon`) · drive-root copy · `C.UTF-8` locale
+**Runtime** — realized-font-handle cap `32768` · `WINEVMEMMAXSIZE` cap · fast-yield gate · FEX-unixlib loader · XRandR / XRender
+**Build** — `-g0 -O2` release build, `llvm-strip` on both the PE DLLs/EXEs and the unix `.so` loaders · zstd-compressed `.wcp` · ccache in CI (build speed only, not in the layer)
+**Inherited bionic base** — the Winlator-bionic / GameNative Android patch set every layer is built on: esync/fsync, winex11 driver (window/keyboard/mouse/OpenGL/bitblt), preloader, clipboard, winemenubuilder, MIDI, DNS resolver, wow64 syscall path
+**GE game-fixes** — `battlenet` · `maplestory` · `dai_xinput` · `eac` · `pso2` · `assettocorsa` · `silence-starcitizen` · `vgsoh` · `WM_ACTIVATEAPP`
+
+</details>
+
+<details>
+<summary><b>Proton 11.0-2</b> &nbsp;·&nbsp; arm64ec + <b>x86_64</b> · Wine 11 · versionCode <code>8</code></summary>
+
+<br>
+
+| | |
+|---|---|
+| **Base** | Valve **Proton 11.0-2** (Wine 11.0) — **this is the line the Wayland and HDR10 work was developed and device-proven on** |
+| **Installs as** | `11.0-2-arm64ec-8` · `11.0-2-x86_64-8` |
+| **Wayland** *(arm64ec only)* | `winewayland.drv` (unix `.so` + `aarch64-windows` and `i386-windows` PE) · 8 bundled Wayland Turnip drivers (`plain`, `a7xx`, `a8xx`, `a8xx-perf`, `a8xx-gen8`, `a8xx-smxz`, `a8xx-white`, `a8xx-upstream`) · `banner-desktop-v1` protocol |
+| **HDR10** *(arm64ec only)* | screen peak / frame-average / black level reported to Windows through a built CTA-861.3 EDID, DXGI and DisplayConfig advanced colour, plus the builtin `amd_ags_x64` |
+| **ntdll fix** | `RtlIsEcCode` bounds check (Denuvo unwind loop) |
+| **EA fixes** | ws2_32 dual-stack DNS · nsiproxy default route · gdiplus span clamp |
+| **DirectAudio** | v1.3.2 (vendored source) — opt-in via registry `Audio=directaudio`; mic capture opt-in via `BANNER_AUDIO_DIRECT_MIC=1` |
+| **XInput fix** | update thread survives transient wait failures (controllers no longer die mid-game) |
+| **Wine XP desktop** | Luna taskbar + start menu (with the Control Panel fix) · XP window frames · `winexp.msstyles` visual style — Blue / Olive Green / Silver, navy / moss / graphite in dark mode |
+| **Assets** | `proton-11.0-2-arm64ec.wcp` · `proton-11.0-2-x86_64.wcp` (4 KB + 16 KB pages) |
+
+**Android compatibility fixes** — SD-card boot (`noexec` / `force_anon`) · drive-root copy · `C.UTF-8` locale
+**Runtime** — realized-font-handle cap `32768` · `WINEVMEMMAXSIZE` cap · fast-yield gate · FEX-unixlib loader · XRandR / XRender
+**Build** — `-g0 -O2` release build, `llvm-strip` on both the PE DLLs/EXEs and the unix `.so` loaders · zstd-compressed `.wcp` · ccache in CI (build speed only, not in the layer)
+**Inherited bionic base** — the Winlator-bionic / GameNative Android patch set every layer is built on: esync/fsync, winex11 driver (window/keyboard/mouse/OpenGL/bitblt), preloader, clipboard, winemenubuilder, MIDI, DNS resolver, wow64 syscall path
+**GE game-fixes** — none (plain Proton)
+
+> ⚠️ The **x86_64** wcp carries every v8 fix **except Wayland** (`winewayland` is arm64ec-only). Proton 11 under box64 also still does not render a window — the arm64ec layer is the one to use.
+
+</details>
+
+<details>
+<summary><b>Proton 11.0-1</b> &nbsp;·&nbsp; arm64ec · Wine 11 · versionCode <code>8</code></summary>
+
+<br>
+
+| | |
+|---|---|
+| **Base** | Valve **[Proton 11.0-1](https://github.com/ValveSoftware/Proton/releases/tag/proton-11.0-1)** (Wine 11.0-1), stock |
+| **Installs as** | `11.0-1-arm64ec-8` |
+| **Wayland** | `winewayland.drv` (unix `.so` + `aarch64-windows` and `i386-windows` PE) · 8 bundled Wayland Turnip drivers (`plain`, `a7xx`, `a8xx`, `a8xx-perf`, `a8xx-gen8`, `a8xx-smxz`, `a8xx-white`, `a8xx-upstream`) · `banner-desktop-v1` protocol |
+| **HDR10** | screen peak / frame-average / black level reported to Windows through a built CTA-861.3 EDID, DXGI and DisplayConfig advanced colour, plus the builtin `amd_ags_x64` |
+| **ntdll fix** | `RtlIsEcCode` bounds check (Denuvo unwind loop) |
+| **EA fixes** | ws2_32 dual-stack DNS · nsiproxy default route · gdiplus span clamp |
+| **DirectAudio** | v1.3.2 (vendored source) — opt-in via registry `Audio=directaudio`; mic capture opt-in via `BANNER_AUDIO_DIRECT_MIC=1` |
+| **XInput fix** | update thread survives transient wait failures (controllers no longer die mid-game) |
+| **Wine XP desktop** | Luna taskbar + start menu (with the Control Panel fix) · XP window frames · `winexp.msstyles` visual style — Blue / Olive Green / Silver, navy / moss / graphite in dark mode |
+| **Assets** | `proton-11.0-1-arm64ec.wcp` (4 KB + 16 KB pages) |
+
+**Android compatibility fixes** — SD-card boot (`noexec` / `force_anon`) · drive-root copy · `C.UTF-8` locale
+**Runtime** — realized-font-handle cap `32768` · `WINEVMEMMAXSIZE` cap · fast-yield gate · FEX-unixlib loader · XRandR / XRender
+**Build** — `-g0 -O2` release build, `llvm-strip` on both the PE DLLs/EXEs and the unix `.so` loaders · zstd-compressed `.wcp` · ccache in CI (build speed only, not in the layer)
+**Inherited bionic base** — the Winlator-bionic / GameNative Android patch set every layer is built on: esync/fsync, winex11 driver (window/keyboard/mouse/OpenGL/bitblt), preloader, clipboard, winemenubuilder, MIDI, DNS resolver, wow64 syscall path
+**GE game-fixes** — none (plain Proton)
+
+</details>
+
+<details>
+<summary><b>Proton-CachyOS 11.0-20260703</b> &nbsp;·&nbsp; arm64ec + <b>x86_64</b> · Wine 11 (CachyOS) · versionCode <code>8</code></summary>
+
+<br>
+
+| | |
+|---|---|
+| **Base** | **[wine-cachyos](https://github.com/CachyOS/wine-cachyos) `b5f2dc7b590`** (release `cachyos-11.0-20260703-slr`: Valve Proton experimental-11.0 + the CachyOS patch set) + our full v7 Android stack |
+| **Installs as** | `11.0-20260703-arm64ec-8` · `11.0-20260703-x86_64-8` |
+| **Wayland** *(arm64ec only)* | `winewayland.drv` (unix `.so` + `aarch64-windows` and `i386-windows` PE) · 8 bundled Wayland Turnip drivers (`plain`, `a7xx`, `a8xx`, `a8xx-perf`, `a8xx-gen8`, `a8xx-smxz`, `a8xx-white`, `a8xx-upstream`) · `banner-desktop-v1` protocol |
+| **HDR10** *(arm64ec only)* | screen peak / frame-average / black level reported to Windows through a built CTA-861.3 EDID, DXGI and DisplayConfig advanced colour, plus the builtin `amd_ags_x64` |
+| **ntdll fix** | `RtlIsEcCode` bounds check (Denuvo unwind loop) |
+| **EA fixes** | ws2_32 dual-stack DNS · nsiproxy default route · gdiplus span clamp |
+| **DirectAudio** | v1.3.2 (vendored source) — opt-in via registry `Audio=directaudio`; mic capture opt-in via `BANNER_AUDIO_DIRECT_MIC=1` |
+| **XInput fix** | update thread survives transient wait failures (controllers no longer die mid-game) |
+| **Wine XP desktop** | Luna taskbar + start menu (with the Control Panel fix) · XP window frames · `winexp.msstyles` visual style — Blue / Olive Green / Silver, navy / moss / graphite in dark mode |
+| **Assets** | `proton-cachyos-11.0-20260703-arm64ec.wcp` · `proton-cachyos-11.0-20260703-x86_64.wcp` (4 KB + 16 KB pages) |
+
+**Android compatibility fixes** — SD-card boot (`noexec` / `force_anon`) · drive-root copy · `C.UTF-8` locale
+**Runtime** — realized-font-handle cap `32768` · `WINEVMEMMAXSIZE` cap · fast-yield gate · FEX-unixlib loader · XRandR / XRender
+**Build** — `-g0 -O2` release build, `llvm-strip` on both the PE DLLs/EXEs and the unix `.so` loaders · zstd-compressed `.wcp` · ccache in CI (build speed only, not in the layer)
+**Inherited bionic base** — the Winlator-bionic / GameNative Android patch set every layer is built on: esync/fsync, winex11 driver (window/keyboard/mouse/OpenGL/bitblt), preloader, clipboard, winemenubuilder, MIDI, DNS resolver, wow64 syscall path
+**GE game-fixes** — none (CachyOS patch set, not a GE tier)
+
+> ℹ️ **New to the consolidated release** — previously a standalone test build. Its Wayland driver is larger than the other layers' because CachyOS carries its own upstream Wayland additions (`alpha-modifier`, `color-management`, `content-type`) that were merged **alongside** ours rather than replacing them. Also ships CachyOS's expanded `ntoskrnl` anti-cheat API surface and an esync/NTSYNC-tuned scheduler.
 
 </details>
 
 ---
 
-*versionCode 8 · built 2026-09-17 · pre-release, untested on device. Report problems against the layer name and slot shown on the container card.*
+*versionCode 8 · built 2026-09-17 · **pre-release, not tested on device**. Proton 10.0-4 and GE-Proton 10.0-34 are not in this release and stay at v7. Report problems against the layer name and slot shown on the container card.*

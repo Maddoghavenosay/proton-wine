@@ -65,9 +65,18 @@ jobs:
             n=$(basename "$f")
             if echo "$have" | grep -qx "$n"; then
               echo "$n already attached, leaving it"
-            else
-              gh release upload "$TAG" -R "$REPO" "$f"
+              continue
             fi
+            # GitHub's upload endpoint returns a transient HTTP 500 often enough on
+            # ~115 MB assets that a single attempt loses the rest of the batch.
+            for attempt in 1 2 3 4 5; do
+              if gh release upload "$TAG" -R "$REPO" --clobber "$f"; then
+                echo "   uploaded $n (attempt $attempt)"; break
+              fi
+              if [ "$attempt" = 5 ]; then echo "FATAL: $n failed after 5 attempts"; exit 1; fi
+              echo "   upload of $n failed, retrying in $((attempt * 20))s"
+              sleep $((attempt * 20))
+            done
           done
           gh release edit "$TAG" -R "$REPO" --notes-file body.md \
             --title "GE-Proton 11.0-7.1 / 11.0-7 / 11.0-6 / 11.0-5 / 11.0-3 · Proton 11.0-2 / 11.0-1 · Proton-CachyOS — arm64ec + x86_64 bionic 20260917 (versionCode 8: Wayland + HDR10) [PRE-RELEASE]"
