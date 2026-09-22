@@ -750,7 +750,17 @@ static void init_locale(void)
         messages = "en-US";
     }
 
-    if (!unix_to_win_locale( messages, user_locale )) user_locale[0] = 0;
+#ifdef __ANDROID__
+    /* On Android bionic, C.UTF-8 maps to en-US (codepage 1252).
+     * CJK games need codepage 936 (GBK) or 932 (Shift-JIS).
+     * Allow override via WINE_LOCALE environment variable. */
+    {
+        const char *wine_locale = getenv( "WINE_LOCALE" );
+        if (wine_locale && wine_locale[0]) strcpy( system_locale, wine_locale );
+    }
+#endif
+
+        if (!unix_to_win_locale( messages, user_locale )) user_locale[0] = 0;
     TRACE_(nls)( "Unix LC_MESSAGES is %s, user system locale to %s\n", debugstr_a(messages), debugstr_a(user_locale) );
 
 #ifdef __APPLE__
