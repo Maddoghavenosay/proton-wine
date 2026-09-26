@@ -1,7 +1,8 @@
 diff --git a/dlls/ntdll/unix/env.c b/dlls/ntdll/unix/env.c
 --- a/dlls/ntdll/unix/env.c
 +++ b/dlls/ntdll/unix/env.c
-@@ -644,7 +644,8 @@ static BOOL unix_to_win_locale( const char *unix_name, char *win_name )
+@@ -643,7 +643,8 @@
+     char buffer[LOCALE_NAME_MAX_LENGTH];
      char *p, *country = NULL, *modifier = NULL;
  
 -    if (!unix_name || !unix_name[0] || !strcmp( unix_name, "C" ))
@@ -10,8 +11,7 @@ diff --git a/dlls/ntdll/unix/env.c b/dlls/ntdll/unix/env.c
      {
          unix_name = getenv( "LC_ALL" );
          if (!unix_name || !unix_name[0]) return FALSE;
-@@ -733,6 +734,19 @@ static void init_locale(void)
-     const NLS_LOCALE_HEADER *locale_table;
+@@ -734,6 +735,19 @@
      const NLS_LOCALE_DATA *locale;
      char *p;
  
