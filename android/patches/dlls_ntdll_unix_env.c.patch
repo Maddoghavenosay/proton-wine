@@ -1,19 +1,33 @@
 diff --git a/dlls/ntdll/unix/env.c b/dlls/ntdll/unix/env.c
 --- a/dlls/ntdll/unix/env.c
 +++ b/dlls/ntdll/unix/env.c
-@@ -844,6 +844,15 @@ void init_environment(void)
- {
-     USHORT *case_table;
+@@ -644,7 +644,8 @@ static BOOL unix_to_win_locale( const char *unix_name, char *win_name )
+     char *p, *country = NULL, *modifier = NULL;
+ 
+-    if (!unix_name || !unix_name[0] || !strcmp( unix_name, "C" ))
++    if (!unix_name || !unix_name[0] ||
++        !strcmp( unix_name, "C" ) || !strcmp( unix_name, "C.UTF-8" ))
+     {
+         unix_name = getenv( "LC_ALL" );
+         if (!unix_name || !unix_name[0]) return FALSE;
+@@ -733,6 +734,19 @@ static void init_locale(void)
+     const NLS_LOCALE_HEADER *locale_table;
+     const NLS_LOCALE_DATA *locale;
+     char *p;
  
 +#ifdef __ANDROID__
-+    /* bionic (Android) ships no locale data beyond "C"/"C.UTF-8"; a bare
-+     * setlocale(LC_*, "") therefore falls back to the 7-bit "C" locale, which
-+     * breaks UTF-8 codeset detection (init_unix_codepage) and NLS conversion.
-+     * Default LC_ALL to a UTF-8 capable locale before any setlocale() runs;
-+     * the trailing 0 leaves an explicit environment value untouched. */
-+    setenv( "LC_ALL", "C.UTF-8", 0 );
++    /* Allow explicit override via WINE_LOCALE (e.g. "zh-CN", "ja-JP", "ko-KR").
++     * This takes priority over setlocale()/LC_ALL detection. */
++    {
++        const char *wine_locale = getenv( "WINE_LOCALE" );
++        if (wine_locale && wine_locale[0])
++        {
++            strcpy( system_locale, wine_locale );
++            FIXME_(nls)( "WINE_LOCALE override: system locale set to %s\n", debugstr_a(wine_locale) );
++        }
++    }
 +#endif
 +
-     init_unix_codepage();
-     init_locale();
- 
+     if (!(all = setlocale( LC_ALL, "" )) && (all = getenv( "LC_ALL" )))
+         FIXME_(nls)( "Failed to set LC_ALL to %s, is the locale supported?\n", debugstr_a(all) );
+     if (!(ctype = setlocale( LC_CTYPE, "" )) && (ctype = getenv( "LC_CTYPE" )))

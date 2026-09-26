@@ -643,8 +643,7 @@ static BOOL unix_to_win_locale( const char *unix_name, char *win_name )
     char buffer[LOCALE_NAME_MAX_LENGTH];
     char *p, *country = NULL, *modifier = NULL;
 
-    if (!unix_name || !unix_name[0] ||
-        !strcmp( unix_name, "C" ) || !strcmp( unix_name, "C.UTF-8" ))
+    if (!unix_name || !unix_name[0] || !strcmp( unix_name, "C" ))
     {
         unix_name = getenv( "LC_ALL" );
         if (!unix_name || !unix_name[0]) return FALSE;
@@ -734,19 +733,6 @@ static void init_locale(void)
     const NLS_LOCALE_HEADER *locale_table;
     const NLS_LOCALE_DATA *locale;
     char *p;
-
-#ifdef __ANDROID__
-    /* Allow explicit override via WINE_LOCALE (e.g. "zh-CN", "ja-JP", "ko-KR").
-     * This takes priority over setlocale()/LC_ALL detection. */
-    {
-        const char *wine_locale = getenv( "WINE_LOCALE" );
-        if (wine_locale && wine_locale[0])
-        {
-            strcpy( system_locale, wine_locale );
-            FIXME_(nls)( "WINE_LOCALE override: system locale set to %s\n", debugstr_a(wine_locale) );
-        }
-    }
-#endif
 
     if (!(all = setlocale( LC_ALL, "" )) && (all = getenv( "LC_ALL" )))
         FIXME_(nls)( "Failed to set LC_ALL to %s, is the locale supported?\n", debugstr_a(all) );
@@ -857,10 +843,6 @@ static void init_locale(void)
 void init_environment(void)
 {
     USHORT *case_table;
-
-    /* NOTE: the old setenv("LC_ALL", "C.UTF-8", 0) default is removed —
-     * it made setlocale() return "C.UTF-8" and bypassed the LC_ALL fallback
-     * in unix_to_win_locale().  "C.UTF-8" is now handled there directly. */
 
     init_unix_codepage();
     init_locale();
