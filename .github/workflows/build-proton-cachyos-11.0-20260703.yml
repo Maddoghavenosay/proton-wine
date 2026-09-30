@@ -376,6 +376,37 @@ jobs:
             python3 -c 'import json; p=json.load(open("report-profile.json")); print("   type=%s\n   versionName=%s\n   versionCode=%s\n   description=%s" % (p["type"], p["versionName"], p["versionCode"], p["description"]))'
           done
 
+      # lsteamclient (Steam bridge for a native host client; default OFF at runtime, opt-in via
+      # WINE_LSTEAMCLIENT=1) must be in the arm64ec layer and absent from the x86_64 one.
+      # steam.exe (steam_helper) is never shipped. Fails the build otherwise; prints sizes.
+      - name: Verify lsteamclient in the wcp (${{ matrix.arch }})
+        run: |
+          cd $GITHUB_WORKSPACE
+          fail=0
+          for WCP in *.wcp; do
+            echo "== $WCP"
+            tar -I zstd -tvf "$WCP" > wcp-v.lst
+            awk '{print $6}' wcp-v.lst | sed 's#^\./##' > wcp.lst
+            if grep -qiE '(^|/)steam\.exe$' wcp.lst; then echo "FATAL: steam.exe present in $WCP"; grep -iE '(^|/)steam\.exe$' wcp.lst; fail=1; fi
+            if [ "${{ matrix.arch }}" == "x86_64" ]; then
+              if grep -qi 'lsteamclient' wcp.lst; then echo "FATAL: lsteamclient present in the x86_64 layer"; grep -i lsteamclient wcp.lst; fail=1
+              else echo "   ok: no lsteamclient (x86_64 leg, disabled by design)"; fi
+            else
+              for e in lib/wine/aarch64-windows/lsteamclient.dll lib/wine/i386-windows/lsteamclient.dll lib/wine/aarch64-unix/lsteamclient.so; do
+                if grep -qx -- "$e" wcp.lst; then
+                  echo "   OK $e $(awk -v p="$e" '{f=$6; sub(/^\.\//,"",f); if (f==p) print $3}' wcp-v.lst) B"
+                else echo "FATAL: $e missing from $WCP"; fail=1; fi
+              done
+            fi
+            echo "   wcp size $(stat -c %s "$WCP") B"
+          done
+          if [ "${{ matrix.arch }}" != "x86_64" ]; then
+            SO="$HOME/compiled-files-aarch64/lib/wine/aarch64-unix/lsteamclient.so"
+            READELF="$(ls -d $HOME/Android/Sdk/ndk/*/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-readelf 2>/dev/null | head -1)"
+            if [ -f "$SO" ] && [ -n "$READELF" ]; then "$READELF" -d "$SO" | grep -E 'NEEDED|SONAME' || true; fi
+          fi
+          exit $fail
+
       - name: Upload build artifacts
         run: |
           if [ "${{ matrix.arch }}" == "x86_64" ]; then
