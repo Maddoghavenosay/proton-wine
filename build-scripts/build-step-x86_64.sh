@@ -140,6 +140,8 @@ do
     fi
   fi
 
+  # lsteamclient (the Steam bridge to a native host client) is arm64ec-only: an x86_64 unix side
+  # cannot dlopen the host's aarch64 libsteamclient.so, so it is not built for this layer.
   if [ "$arg" == "--configure" ];
   then
     ./configure \
@@ -155,6 +157,7 @@ do
       --disable-win16 \
       --enable-nls \
       --disable-amd_ags_x64 \
+      --disable-lsteamclient \
       --enable-wineandroid_drv=no \
       --disable-tests \
       --with-alsa \
