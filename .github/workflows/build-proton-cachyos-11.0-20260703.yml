@@ -152,6 +152,32 @@ jobs:
             bash build-scripts/build-step-arm64ec.sh --build-sysvshm
           fi
 
+      # Userspace ntsync (runtime OPT-IN via WINENTSYNC=1; esync stays the default).
+      # ntsync-android by Joshua Tam (joshuatam, GameNative), LGPL-3.0-only, pinned so a
+      # push to their master can never change what this layer links. Both legs link it.
+      - name: Check out ntsync-android (pinned 7ce6435)
+        uses: actions/checkout@v4
+        with:
+          repository: GameNative/ntsync-android
+          ref: 7ce6435e5979b1cb5341aa4b299f31e8937fe121
+          path: _deps/ntsync-android
+
+      - name: Set up Rust for ntsync-android
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android, x86_64-linux-android
+
+      - name: Build ntsync-android library for ${{ matrix.arch }}
+        env:
+          NTSYNC_ANDROID_DIR: ${{ github.workspace }}/_deps/ntsync-android
+        run: |
+          test "$(git -C "$NTSYNC_ANDROID_DIR" rev-parse HEAD)" = 7ce6435e5979b1cb5341aa4b299f31e8937fe121
+          if [ "${{ matrix.arch }}" == "x86_64" ]; then
+            bash build-scripts/build-step-x86_64.sh --build-ntsync-android
+          else
+            bash build-scripts/build-step-arm64ec.sh --build-ntsync-android
+          fi
+
       - name: Configure build for ${{ matrix.arch }} (sdk${{ matrix.api_level }})
         run: |
           PAGES_FLAG=""

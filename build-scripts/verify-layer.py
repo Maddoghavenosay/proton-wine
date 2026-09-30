@@ -173,6 +173,15 @@ def main():
     report(b"esync: up and running" in read(os.path.join(root, "bin/wineserver")),
            "wineserver: esync server side")
     report(b"WINE_FAST_YIELD" in ntdll_so, "ntdll.so: fast-yield gate")
+    # Userspace ntsync (opt-in, WINENTSYNC=1): the Wine wiring AND the statically linked
+    # ntsync-android library (a string only the library contains) must be in both halves.
+    wineserver = read(os.path.join(root, "bin/wineserver"))
+    report(b"WINENTSYNC" in ntdll_so and b"NTSYNC_SWEEP_INTERVAL_SEC" in ntdll_so,
+           "ntdll.so: userspace ntsync opt-in + libntsync_android linked")
+    report(b"WINENTSYNC set, no usable /dev/ntsync, using userspace ntsync" in wineserver and b"NTSYNC_SWEEP_INTERVAL_SEC" in wineserver,
+           "wineserver: userspace ntsync opt-in + libntsync_android linked")
+    report(os.path.isfile(os.path.join(root, "share/licenses/ntsync-android/LICENSE")),
+           "share/licenses/ntsync-android/LICENSE shipped (LGPL-3.0, static link)")
     report(b"WINEVMEMMAXSIZE" in ntdll_so, "ntdll.so: WINEVMEMMAXSIZE address-space cap")
     report(b"C.UTF-8" in ntdll_so, "ntdll.so: C.UTF-8 bionic locale bring-up")
     if arm64ec:
