@@ -106,6 +106,35 @@ do
     echo "16KB page size support enabled"
   fi
 
+  if [ "$arg" == "--build-ntsync-android" ];
+  then
+    # Userspace ntsync backend, used ONLY when WINENTSYNC=1 is set at runtime
+    # (esync stays the default). ntsync-android by Joshua Tam (joshuatam,
+    # GameNative), https://github.com/GameNative/ntsync-android, LGPL-3.0-only;
+    # the workflow checks it out pinned to 7ce6435. Statically linked into
+    # ntdll.so and wineserver (-lntsync_android in both UNIX_LIBS), so the
+    # link is unconditional and a failed build here must stop the layer.
+    SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+    PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
+    NTSYNC_DIR="${NTSYNC_ANDROID_DIR:-$PROJECT_ROOT/../ntsync-android}"
+    NTSYNC_TRIPLE=aarch64-linux-android
+    if [ ! -f "$NTSYNC_DIR/Cargo.toml" ]; then
+        echo "FATAL: ntsync-android not found at $NTSYNC_DIR"
+        exit 1
+    fi
+    echo "Building libntsync_android.a ($NTSYNC_TRIPLE) from $NTSYNC_DIR @ $(git -C "$NTSYNC_DIR" rev-parse HEAD 2>/dev/null)"
+    rustup target add "$NTSYNC_TRIPLE" || exit $?
+    # Build from the crate root so its .cargo/config.toml applies (it only
+    # matters for the cdylib; the static archive takes the page alignment of
+    # ntdll.so/wineserver, i.e. this script's LDFLAGS).
+    ( cd "$NTSYNC_DIR" && env CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER="$TOOLCHAIN/$TARGET-clang" AR="$TOOLCHAIN/llvm-ar" \
+        cargo build --release --locked --target "$NTSYNC_TRIPLE" ) || { echo "FATAL: ntsync-android build failed"; exit 1; }
+    mkdir -p "$deps/lib"
+    cp "$NTSYNC_DIR/target/$NTSYNC_TRIPLE/release/libntsync_android.a" "$deps/lib/" || { echo "FATAL: libntsync_android.a missing"; exit 1; }
+    rm -f "$deps/lib/libntsync_android.so"
+    echo "Copied libntsync_android.a ($NTSYNC_TRIPLE) to $deps/lib/"
+  fi
+
   if [ "$arg" == "--build-sysvshm" ];
   then
     # Build android_sysvshm library
@@ -291,6 +320,8 @@ do
 	  "dlls_ntdll_unix_esync.h.patch"
 	  "server_esync.c.patch"
 	  "server_esync.h.patch"
+	  # userspace ntsync, OPT-IN at runtime (WINENTSYNC=1); must follow esync
+	  "ntsync_userspace.patch"
     )
 
     # Fail-HARD apply loop. The old loop reported a drifted patch as "SKIPPED" and
@@ -347,6 +378,9 @@ do
       "dlls/win32u/defwnd.c|WINE_XP_FRAMES|XP window frames (in-tree)"
       "dlls/ntdll/unix/esync.c|ESYNC_AUTO_EVENT|esync re-added to Wine-11 (Proton 11 dropped it upstream)"
       "server/esync.c|esync: up and running|esync server side re-added to Wine-11"
+      "server/inproc_sync.c|WINENTSYNC set, no usable /dev/ntsync, using userspace ntsync|userspace ntsync, opt-in via WINENTSYNC=1 (server)"
+      "dlls/ntdll/unix/esync.c|if (ntsync_opt_in_active) return 0;|esync steps aside only under the WINENTSYNC opt-in (client)"
+      "dlls/ntdll/unix/sync.c|userspace_wait_objs|userspace ntsync wait path (client)"
       "dlls/gdiplus/region.c|if (x1_min <= x) x1_min = x + 1;|gdiplus degenerate-span clamp (EA installer wizard)"
       "dlls/ntdll/unix/loader.c|load_unixlib_by_name|FEX unixlib load-by-name loader"
 
@@ -404,6 +438,10 @@ do
     cp -r $install_dir/bin/notepad $OUTPUT_DIR/bin
     cp -r $install_dir/lib/wine  $OUTPUT_DIR/lib
     cp -r $install_dir/share/wine  $OUTPUT_DIR/share
+    # ntsync-android (statically linked, LGPL-3.0-only): ship its licence + provenance.
+    mkdir -p "$OUTPUT_DIR/share/licenses/ntsync-android"
+    _NTS="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/android/ntsync_android"
+    cp "$_NTS/LICENSE" "$_NTS/NOTICE" "$OUTPUT_DIR/share/licenses/ntsync-android/" || exit $?
 
     # A layer without amd_ags_x64.dll leaves every game that links AGS on its own bundled copy,
     # which on a non-AMD GPU reports no display at all - and with it no HDR10. The module is
