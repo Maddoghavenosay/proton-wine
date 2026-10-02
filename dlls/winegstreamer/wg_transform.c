@@ -1179,7 +1179,8 @@ static NTSTATUS copy_buffer(GstBuffer *buffer, struct wg_sample *sample, gsize *
     return STATUS_SUCCESS;
 }
 
-static void set_sample_flags_from_buffer(struct wg_sample *sample, GstBuffer *buffer, gsize total_size, bool is_video)
+static void set_sample_flags_from_buffer(struct wg_sample *sample, GstBuffer *buffer, gsize total_size,
+        const GstVideoInfo *video_info)
 {
     GstReferenceTimestampMeta *timestamps;
     GstCaps *transform_timestamp;
@@ -1189,11 +1190,39 @@ static void set_sample_flags_from_buffer(struct wg_sample *sample, GstBuffer *bu
     gst_caps_unref(transform_timestamp);
 
     /* for videos, prefer decoder output PTS over the preserved input timestamp */
-    if (is_video && GST_BUFFER_PTS_IS_VALID(buffer))
+    if (video_info && GST_BUFFER_PTS_IS_VALID(buffer))
     {
+        GstClockTime frame_duration = GST_CLOCK_TIME_NONE, max_duration = GST_SECOND;
+
+        if (video_info->fps_n > 0 && video_info->fps_d > 0)
+        {
+            frame_duration = gst_util_uint64_scale(GST_SECOND, video_info->fps_d, video_info->fps_n);
+            max_duration = 4 * frame_duration;
+        }
+
         sample->flags |= WG_SAMPLE_FLAG_HAS_PTS | WG_SAMPLE_FLAG_PRESERVE_TIMESTAMPS;
         sample->pts = GST_BUFFER_PTS(buffer) / 100;
-        if (GST_BUFFER_DURATION_IS_VALID(buffer))
+
+        /* Only trust the decoder's duration when it is plausible for one frame. avdec_wmv2 can
+         * output a duration of minutes for the first frame (Ninja Gaiden Sigma's 1080p WMV2
+         * movies: 129.7s), and games that wait for time + duration before reading the next video
+         * sample then never read video again: black movie with sound. */
+        if (GST_BUFFER_DURATION_IS_VALID(buffer) && GST_BUFFER_DURATION(buffer) > max_duration)
+        {
+            GST_WARNING("Ignoring implausible decoder duration %" GST_TIME_FORMAT " (frame %" GST_TIME_FORMAT ").",
+                    GST_TIME_ARGS(GST_BUFFER_DURATION(buffer)), GST_TIME_ARGS(frame_duration));
+            if (timestamps && timestamps->duration != GST_CLOCK_TIME_NONE && timestamps->duration <= max_duration)
+            {
+                sample->flags |= WG_SAMPLE_FLAG_HAS_DURATION;
+                sample->duration = timestamps->duration / 100;
+            }
+            else if (frame_duration != GST_CLOCK_TIME_NONE)
+            {
+                sample->flags |= WG_SAMPLE_FLAG_HAS_DURATION;
+                sample->duration = frame_duration / 100;
+            }
+        }
+        else if (GST_BUFFER_DURATION_IS_VALID(buffer))
         {
             GstClockTime duration = GST_BUFFER_DURATION(buffer) / 100;
 
@@ -1346,7 +1375,7 @@ static NTSTATUS read_transform_output_video(struct wg_sample *sample, GstBuffer 
     if (dst_buffer)
         gst_buffer_unref(dst_buffer);
 
-    set_sample_flags_from_buffer(sample, buffer, total_size, true);
+    set_sample_flags_from_buffer(sample, buffer, total_size, src_video_info);
 
     if (needs_copy)
         GST_WARNING("Copied %u bytes, sample %p, flags %#x", sample->size, sample, sample->flags);
@@ -1376,7 +1405,7 @@ static NTSTATUS read_transform_output(struct wg_sample *sample, GstBuffer *buffe
         return status;
     }
 
-    set_sample_flags_from_buffer(sample, buffer, total_size, false);
+    set_sample_flags_from_buffer(sample, buffer, total_size, NULL);
 
     if (needs_copy)
         GST_INFO("Copied %u bytes, sample %p, flags %#x", sample->size, sample, sample->flags);
