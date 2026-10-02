@@ -1568,6 +1568,11 @@ static HRESULT WINAPI source_reader_async_commands_callback_Invoke(IMFAsyncCallb
             EnterCriticalSection(&reader->cs);
             stream = &reader->streams[command->u.sample.stream_index];
             response = media_stream_pop_response(reader, stream);
+            /* Record the delivered timestamp here as well: ANY_STREAM picks the least advanced
+             * stream by last_sample_ts, and a stream whose samples are always delivered on this
+             * path would otherwise look stuck at its first timestamp and win every pick. */
+            if (response && response->sample)
+                stream->last_sample_ts = response->timestamp;
             LeaveCriticalSection(&reader->cs);
 
             if (response)
