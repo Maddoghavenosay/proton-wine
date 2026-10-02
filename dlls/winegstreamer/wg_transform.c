@@ -1209,17 +1209,17 @@ static void set_sample_flags_from_buffer(struct wg_sample *sample, GstBuffer *bu
          * sample then never read video again: black movie with sound. */
         if (GST_BUFFER_DURATION_IS_VALID(buffer) && GST_BUFFER_DURATION(buffer) > max_duration)
         {
-            GST_WARNING("Ignoring implausible decoder duration %" GST_TIME_FORMAT " (frame %" GST_TIME_FORMAT ").",
+            GST_INFO("Ignoring implausible decoder duration %" GST_TIME_FORMAT " (frame %" GST_TIME_FORMAT ").",
                     GST_TIME_ARGS(GST_BUFFER_DURATION(buffer)), GST_TIME_ARGS(frame_duration));
-            if (timestamps && timestamps->duration != GST_CLOCK_TIME_NONE && timestamps->duration <= max_duration)
-            {
-                sample->flags |= WG_SAMPLE_FLAG_HAS_DURATION;
-                sample->duration = timestamps->duration / 100;
-            }
-            else if (frame_duration != GST_CLOCK_TIME_NONE)
+            if (frame_duration != GST_CLOCK_TIME_NONE)
             {
                 sample->flags |= WG_SAMPLE_FLAG_HAS_DURATION;
                 sample->duration = frame_duration / 100;
+            }
+            else if (timestamps && timestamps->duration != GST_CLOCK_TIME_NONE && timestamps->duration <= max_duration)
+            {
+                sample->flags |= WG_SAMPLE_FLAG_HAS_DURATION;
+                sample->duration = timestamps->duration / 100;
             }
         }
         else if (GST_BUFFER_DURATION_IS_VALID(buffer))
