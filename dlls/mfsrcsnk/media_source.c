@@ -2081,12 +2081,20 @@ static BOOL use_gst_byte_stream_handler(void)
     BOOL result;
     DWORD size = sizeof(result);
 
+    const char *use_dmo = getenv( "WINE_USE_DMO" );
+
+    /* Bionic layers: winegstreamer stays the default byte-stream handler, winedmo (FFmpeg) is
+     * opt-in, so a layer whose winedmo works does not change what every existing container,
+     * app build and shortcut has been playing cutscenes with. Opt in with WINE_USE_DMO=1 or
+     * DisableGstByteStreamHandler=1; a DWORD 0 pins winegstreamer. */
+    if (use_dmo && *use_dmo == '1') return FALSE;
+
     /* @@ Wine registry key: HKCU\Software\Wine\MediaFoundation */
     if (!RegGetValueW( HKEY_CURRENT_USER, L"Software\\Wine\\MediaFoundation", L"DisableGstByteStreamHandler",
                        RRF_RT_REG_DWORD, NULL, &result, &size ))
         return !result;
 
-    return FALSE;
+    return TRUE;
 }
 
 static HRESULT WINAPI asf_byte_stream_plugin_factory_CreateInstance(IClassFactory *iface,
