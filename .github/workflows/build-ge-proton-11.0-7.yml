@@ -251,6 +251,21 @@ jobs:
           wget --tries=5 --retry-connrefused --waitretry=10 "https://raw.githubusercontent.com/GameNative/bionic-prefix-files/$PIN/$NAME" -O $GITHUB_WORKSPACE/prefixPack.txz
           echo "$SHA  $GITHUB_WORKSPACE/prefixPack.txz" | sha256sum -c -
 
+      - name: Carry the media registrations into the x86_64 prefix pack
+        if: matrix.arch == 'x86_64'
+        run: |
+          # The pinned x86_64 pack predates winegstreamer's and the byte-stream handlers'
+          # self-registration (no Media Foundation handler for .wmv/.mp4: cutscenes skipped);
+          # the arm64ec pack has them and the registry is architecture-neutral.
+          PIN=6286ac456e4a8376e053ce1ce4f565bd37cc4af4
+          SHA=ade99dc80b17086a269c038c9bc50167902103a9a61df763cba4d613543ff12a
+          wget --tries=5 --retry-connrefused --waitretry=10 "https://raw.githubusercontent.com/GameNative/bionic-prefix-files/$PIN/prefixPack-arm64ec-11.txz" -O prefixPack-donor.txz
+          echo "$SHA  prefixPack-donor.txz" | sha256sum -c -
+          python3 android/prefixpack-media-registry.py $GITHUB_WORKSPACE/prefixPack.txz prefixPack-donor.txz prefixPack-fixed.txz
+          tar -xJOf prefixPack-fixed.txz .wine/system.reg | grep -q 'ByteStreamHandlers\\\\.wmv' || { echo "no .wmv handler in the patched pack"; exit 1; }
+          mv prefixPack-fixed.txz $GITHUB_WORKSPACE/prefixPack.txz
+          rm -f prefixPack-donor.txz
+
       - name: Generate profile.json files
         run: |
           if [ "${{ matrix.arch }}" == "x86_64" ]; then
