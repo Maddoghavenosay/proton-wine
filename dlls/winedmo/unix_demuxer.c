@@ -38,7 +38,42 @@ struct stream
 {
     AVBSFContext *filter;
     BOOL eos;
+    unsigned int swap_bytes; /* bytes per sample to byte-reverse on each packet, 0 = none */
 };
+
+/* WAVEFORMATEX carries no endianness, so big-endian PCM is handed over as its little-endian
+ * twin and the samples are byte-reversed per packet below. Proton did this with a private
+ * AVBitStreamFilter built on FFmpeg-4 internals (AVBSFContext->internal, par->channels);
+ * FFmpeg 5+ has neither, so the swap lives here on the public API instead. */
+static enum AVCodecID reverse_codec_id( enum AVCodecID codec_id )
+{
+    switch (codec_id)
+    {
+    case AV_CODEC_ID_PCM_S16BE: return AV_CODEC_ID_PCM_S16LE;
+    case AV_CODEC_ID_PCM_S24BE: return AV_CODEC_ID_PCM_S24LE;
+    case AV_CODEC_ID_PCM_S32BE: return AV_CODEC_ID_PCM_S32LE;
+    case AV_CODEC_ID_PCM_S64BE: return AV_CODEC_ID_PCM_S64LE;
+    case AV_CODEC_ID_PCM_F32BE: return AV_CODEC_ID_PCM_F32LE;
+    case AV_CODEC_ID_PCM_F64BE: return AV_CODEC_ID_PCM_F64LE;
+    default: return codec_id;
+    }
+}
+
+static void packet_reverse_byte_order( AVPacket *packet, unsigned int bytes_per_sample )
+{
+    uint8_t *buf = packet->data, *end = packet->data + packet->size - packet->size % bytes_per_sample;
+    unsigned int i;
+
+    for (; buf < end; buf += bytes_per_sample)
+    {
+        for (i = 0; i < bytes_per_sample / 2; i++)
+        {
+            uint8_t tmp = buf[i];
+            buf[i] = buf[bytes_per_sample - i - 1];
+            buf[bytes_per_sample - i - 1] = tmp;
+        }
+    }
+}
 
 struct demuxer
 {
@@ -142,18 +177,17 @@ static NTSTATUS demuxer_create_streams( struct demuxer *demuxer )
                 continue;
             }
         }
-        else if (codec_is_big_endian_pcm(par->codec_id))
-        {
-            /* WAVEFORMATEX does not contain endianness info, so this needs to be converted here. */
-            if (av_bsf_alloc( &ff_pcm_byte_order_reverse_bsf, &stream->filter ) < 0) return STATUS_UNSUCCESSFUL;
-            avcodec_parameters_copy( stream->filter->par_in, par );
-            av_bsf_init( stream->filter );
-            continue;
-        }
 
         av_bsf_get_null_filter( &stream->filter );
         avcodec_parameters_copy( stream->filter->par_in, demuxer->ctx->streams[i]->codecpar );
         avcodec_parameters_copy( stream->filter->par_out, demuxer->ctx->streams[i]->codecpar );
+
+        if (codec_is_big_endian_pcm(par->codec_id) && par->bits_per_coded_sample > 0 && !(par->bits_per_coded_sample % 8u))
+        {
+            /* WAVEFORMATEX does not contain endianness info, so this needs to be converted here. */
+            stream->filter->par_out->codec_id = reverse_codec_id( par->codec_id );
+            stream->swap_bytes = par->bits_per_coded_sample / 8u;
+        }
     }
 
     return STATUS_SUCCESS;
@@ -345,7 +379,13 @@ static NTSTATUS demuxer_filter_packet( struct demuxer *demuxer, AVPacket **packe
         if (!(stream = demuxer->last_stream)) ret = 0;
         else
         {
-            if (!(ret = av_bsf_receive_packet( stream->filter, *packet ))) return STATUS_SUCCESS;
+            if (!(ret = av_bsf_receive_packet( stream->filter, *packet )))
+            {
+                if (stream->swap_bytes && !(ret = av_packet_make_writable( *packet )))
+                    packet_reverse_byte_order( *packet, stream->swap_bytes );
+                if (!ret) return STATUS_SUCCESS;
+                WARN( "Failed to make packet writable, error %s.\n", debugstr_averr( ret ) );
+            }
             if (ret == AVERROR_EOF) stream->eos = TRUE;
             if (!ret || ret == AVERROR_EOF || ret == AVERROR(EAGAIN)) ret = 0;
             else WARN( "Failed to read packet from filter, error %s.\n", debugstr_averr( ret ) );
