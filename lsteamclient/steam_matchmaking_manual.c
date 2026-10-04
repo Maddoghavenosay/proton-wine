@@ -35,13 +35,20 @@ static void bl_shim_load(void)
     HMODULE self, dll;
     WCHAR *p;
     bl_shim_state = -1;
-    if (!GetModuleHandleExW( GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
-                             (const WCHAR *)bl_shim_load, &self )) return;
-    if (!GetModuleFileNameW( self, path, MAX_PATH )) return;
-    for (p = path + lstrlenW( path ); p > path && p[-1] != '\\'; p--) ;
-    if (p == path) return;
-    lstrcpyW( p, L"blsteambrowser.dll" );
-    if (!(dll = LoadLibraryW( path ))) { WARN( "no %s (%lu) — browser calls stay ARM64EC\n", debugstr_w( path ), GetLastError() ); return; }
+    /* By name first: the file ships in the layer's lib/wine/<arch>-windows next to this DLL, which
+     * Wine's loader searches for a bare name (our own module path reports as system32). */
+    if (!(dll = LoadLibraryW( L"blsteambrowser.dll" )))
+    {
+        DWORD err = GetLastError();
+        if (GetModuleHandleExW( GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+                                (const WCHAR *)bl_shim_load, &self ) && GetModuleFileNameW( self, path, MAX_PATH ))
+        {
+            for (p = path + lstrlenW( path ); p > path && p[-1] != '\\'; p--) ;
+            if (p != path) { lstrcpyW( p, L"blsteambrowser.dll" ); dll = LoadLibraryW( path ); }
+        }
+        if (!dll) { WARN( "no blsteambrowser.dll (%lu, by path %s %lu) — browser calls stay ARM64EC\n", err, debugstr_w( path ), GetLastError() ); return; }
+    }
+    lstrcpyW( path, L"blsteambrowser.dll" );
     bl_shim_create_ptr = (bl_shim_create_fn)GetProcAddress( dll, "bl_shim_create" );
     if (bl_shim_create_ptr) { bl_shim_state = 1; TRACE( "loaded %s\n", debugstr_w( path ) ); }
 }
