@@ -1,6 +1,95 @@
+#include <stddef.h>
 #include "steamclient_private.h"
 
 WINE_DEFAULT_DEBUG_CHANNEL(steamclient);
+
+/* ── Bannerlator server browser: PE-side item pointer cache ─────────────────────────────────
+ * With the Bannerlator browser (BL_SERVER_BROWSER=1) the unix side keeps every item at a stable
+ * address for the life of the request (deque; refresh clears it, and RefreshQuery/ReleaseRequest
+ * pass through here first). The game's list sort re-fetches details for every comparison — CS:S
+ * makes ~800k GetServerDetails calls for a 5000-server list — so on 64-bit we hand back the unix
+ * pointer directly after the first fetch instead of a unix call + copy each time. */
+BOOL bl_browser_active(void)
+{
+    static int v = -1;
+    if (v < 0)
+    {
+        char b[4] = {0};
+        v = (GetEnvironmentVariableA( "BL_SERVER_BROWSER", b, sizeof(b) ) && b[0] && b[0] != '0') ? 1 : 0;
+    }
+    return v == 1;
+}
+
+/* x86-64 front (blsteambrowser.dll, next to this DLL): the game's sort-driven
+ * GetServerDetails/GetServerCount/IsRefreshing stay inside the x86 JIT. 64-bit only. */
+#ifdef _WIN64
+typedef void *(__cdecl *bl_shim_create_fn)( UINT32, void *, UINT32, UINT32, UINT32, UINT32 );
+static bl_shim_create_fn bl_shim_create_ptr;
+static int bl_shim_state; /* 0 untried, 1 ok, -1 unavailable */
+static struct { struct w_iface *real; struct w_iface *shim; } bl_shims[8];
+static int bl_shim_count;
+
+static void bl_shim_load(void)
+{
+    WCHAR path[MAX_PATH];
+    HMODULE self, dll;
+    WCHAR *p;
+    bl_shim_state = -1;
+    /* By name first: the file ships in the layer's lib/wine/<arch>-windows next to this DLL, which
+     * Wine's loader searches for a bare name (our own module path reports as system32). */
+    if (!(dll = LoadLibraryW( L"blsteambrowser.dll" )))
+    {
+        DWORD err = GetLastError();
+        if (GetModuleHandleExW( GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+                                (const WCHAR *)bl_shim_load, &self ) && GetModuleFileNameW( self, path, MAX_PATH ))
+        {
+            for (p = path + lstrlenW( path ); p > path && p[-1] != '\\'; p--) ;
+            if (p != path) { lstrcpyW( p, L"blsteambrowser.dll" ); dll = LoadLibraryW( path ); }
+        }
+        if (!dll) { WARN( "no blsteambrowser.dll (%lu, by path %s %lu) — browser calls stay ARM64EC\n", err, debugstr_w( path ), GetLastError() ); return; }
+    }
+    lstrcpyW( path, L"blsteambrowser.dll" );
+    bl_shim_create_ptr = (bl_shim_create_fn)GetProcAddress( dll, "bl_shim_create" );
+    if (bl_shim_create_ptr) { bl_shim_state = 1; TRACE( "loaded %s\n", debugstr_w( path ) ); }
+}
+#endif
+
+struct w_iface *bl_shim_wrap( const char *name, struct w_iface *real )
+{
+#ifdef _WIN64
+    UINT32 version;
+    void *shim;
+    int i;
+    if (!real || !bl_browser_active()) return real;
+    if (!strcmp( name, "SteamMatchMakingServers002" )) version = 2;
+    else if (!strcmp( name, "SteamMatchMakingServers003" )) version = 3;
+    else return real;
+    if (!bl_shim_state) bl_shim_load();
+    if (bl_shim_state < 0) return real;
+    for (i = 0; i < bl_shim_count; i++) if (bl_shims[i].real == real) return bl_shims[i].shim;
+    shim = bl_shim_create_ptr( version, real, sizeof(gameserveritem_t_165),
+                               offsetof( struct w_request, bl_items ), offsetof( struct w_request, bl_items_count ),
+                               offsetof( struct w_request, bl_refreshing ) );
+    if (!shim) return real;
+    if (bl_shim_count < 8) { bl_shims[bl_shim_count].real = real; bl_shims[bl_shim_count].shim = shim; bl_shim_count++; }
+    TRACE( "%s: x86 front %p over %p\n", name, shim, real );
+    return shim;
+#else
+    return real;
+#endif
+}
+
+void bl_cache_reset( struct w_request *request )
+{
+    if (!request) return;
+    if (request->bl_ptrs) HeapFree( GetProcessHeap(), 0, (void *)(UINT_PTR)request->bl_ptrs );
+    request->bl_ptrs = 0;
+    request->bl_count = 0;
+    if (request->details) HeapFree( GetProcessHeap(), 0, request->details );
+    request->details = NULL;
+    request->details_count = 0;
+}
+
 
 void __thiscall winISteamMatchmakingServers_SteamMatchMakingServers001_CancelQuery(struct w_iface *_this, uint32_t eType)
 {
@@ -200,7 +289,7 @@ void __thiscall winISteamMatchmakingServers_SteamMatchMakingServers002_ReleaseRe
 
     STEAMCLIENT_CALL( ISteamMatchmakingServers_SteamMatchMakingServers002_ReleaseRequest, &params );
 
-    if (request) HeapFree( GetProcessHeap(), 0, request->details );
+    bl_cache_reset( request );
     HeapFree( GetProcessHeap(), 0, request );
 }
 
@@ -216,6 +305,36 @@ gameserveritem_t_105 * __thiscall winISteamMatchmakingServers_SteamMatchMakingSe
 
     TRACE( "%p\n", _this );
 
+#ifdef _WIN64
+    if (request && bl_browser_active())
+    {
+        void **ptrs = (void **)(UINT_PTR)request->bl_ptrs;
+        if (!ptrs)
+        {
+            struct ISteamMatchmakingServers_SteamMatchMakingServers002_GetServerCount_params count_params =
+            {
+                .u_iface = _this->u_iface,
+                .hRequest = hRequest,
+            };
+            STEAMCLIENT_CALL( ISteamMatchmakingServers_SteamMatchMakingServers002_GetServerCount, &count_params );
+            if (count_params._ret > 0 && (ptrs = HeapAlloc( GetProcessHeap(), HEAP_ZERO_MEMORY, (SIZE_T)count_params._ret * sizeof(void *) )))
+            {
+                request->bl_ptrs = (UINT_PTR)ptrs;
+                request->bl_count = count_params._ret;
+            }
+        }
+        if (ptrs && iServer >= 0 && (UINT64)iServer < request->bl_count)
+        {
+            if (!ptrs[iServer])
+            {
+                STEAMCLIENT_CALL( ISteamMatchmakingServers_SteamMatchMakingServers002_GetServerDetails, &params );
+                ptrs[iServer] = get_unix_buffer( params._ret );
+            }
+            return (gameserveritem_t_105 *)ptrs[iServer];
+        }
+        /* unknown count yet or out of range: normal path below */
+    }
+#endif
     if (request && !request->details)
     {
         struct ISteamMatchmakingServers_SteamMatchMakingServers002_GetServerCount_params count_params =
@@ -433,7 +552,7 @@ void __thiscall winISteamMatchmakingServers_SteamMatchMakingServers003_ReleaseRe
 
     STEAMCLIENT_CALL( ISteamMatchmakingServers_SteamMatchMakingServers003_ReleaseRequest, &params );
 
-    if (request) HeapFree( GetProcessHeap(), 0, request->details );
+    bl_cache_reset( request );
     HeapFree( GetProcessHeap(), 0, request );
 }
 
@@ -449,6 +568,36 @@ gameserveritem_t_105 * __thiscall winISteamMatchmakingServers_SteamMatchMakingSe
 
     TRACE( "%p\n", _this );
 
+#ifdef _WIN64
+    if (request && bl_browser_active())
+    {
+        void **ptrs = (void **)(UINT_PTR)request->bl_ptrs;
+        if (!ptrs)
+        {
+            struct ISteamMatchmakingServers_SteamMatchMakingServers003_GetServerCount_params count_params =
+            {
+                .u_iface = _this->u_iface,
+                .hRequest = hRequest,
+            };
+            STEAMCLIENT_CALL( ISteamMatchmakingServers_SteamMatchMakingServers003_GetServerCount, &count_params );
+            if (count_params._ret > 0 && (ptrs = HeapAlloc( GetProcessHeap(), HEAP_ZERO_MEMORY, (SIZE_T)count_params._ret * sizeof(void *) )))
+            {
+                request->bl_ptrs = (UINT_PTR)ptrs;
+                request->bl_count = count_params._ret;
+            }
+        }
+        if (ptrs && iServer >= 0 && (UINT64)iServer < request->bl_count)
+        {
+            if (!ptrs[iServer])
+            {
+                STEAMCLIENT_CALL( ISteamMatchmakingServers_SteamMatchMakingServers003_GetServerDetails, &params );
+                ptrs[iServer] = get_unix_buffer( params._ret );
+            }
+            return (gameserveritem_t_105 *)ptrs[iServer];
+        }
+        /* unknown count yet or out of range: normal path below */
+    }
+#endif
     if (request && !request->details)
     {
         struct ISteamMatchmakingServers_SteamMatchMakingServers003_GetServerCount_params count_params =

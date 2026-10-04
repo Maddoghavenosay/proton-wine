@@ -275,6 +275,7 @@ void __thiscall winISteamMatchmakingServers_SteamMatchMakingServers002_RefreshQu
         .hRequest = hRequest,
     };
     TRACE("%p\n", _this);
+    bl_cache_reset( (struct w_request *)hRequest ); /* Bannerlator browser: the unix list is rebuilt */
     STEAMCLIENT_CALL( ISteamMatchmakingServers_SteamMatchMakingServers002_RefreshQuery, &params );
 }
 
@@ -429,6 +430,7 @@ void __thiscall winISteamMatchmakingServers_SteamMatchMakingServers003_RefreshQu
         .hRequest = hRequest,
     };
     TRACE("%p\n", _this);
+    bl_cache_reset( (struct w_request *)hRequest ); /* Bannerlator browser: the unix list is rebuilt */
     STEAMCLIENT_CALL( ISteamMatchmakingServers_SteamMatchMakingServers003_RefreshQuery, &params );
 }
 
