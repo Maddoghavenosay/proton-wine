@@ -225,7 +225,7 @@ NTSTATUS ISteamClient_SteamClient011_GetISteamMatchmakingServers( void *args )
 {
     struct ISteamClient_SteamClient011_GetISteamMatchmakingServers_params *params = (struct ISteamClient_SteamClient011_GetISteamMatchmakingServers_params *)args;
     struct u_ISteamClient_SteamClient011 *iface = (struct u_ISteamClient_SteamClient011 *)params->u_iface;
-    params->_ret = iface->GetISteamMatchmakingServers( params->hSteamUser, params->hSteamPipe, params->pchVersion );
+    params->_ret = bl_server_browser_override( params->pchVersion, iface->GetISteamMatchmakingServers( params->hSteamUser, params->hSteamPipe, params->pchVersion ) );
     return 0;
 }
 
@@ -234,7 +234,7 @@ NTSTATUS wow64_ISteamClient_SteamClient011_GetISteamMatchmakingServers( void *ar
 {
     struct wow64_ISteamClient_SteamClient011_GetISteamMatchmakingServers_params *params = (struct wow64_ISteamClient_SteamClient011_GetISteamMatchmakingServers_params *)args;
     struct u_ISteamClient_SteamClient011 *iface = (struct u_ISteamClient_SteamClient011 *)params->u_iface;
-    params->_ret = iface->GetISteamMatchmakingServers( params->hSteamUser, params->hSteamPipe, params->pchVersion );
+    params->_ret = bl_server_browser_override( params->pchVersion, iface->GetISteamMatchmakingServers( params->hSteamUser, params->hSteamPipe, params->pchVersion ) );
     return 0;
 }
 #endif
