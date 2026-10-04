@@ -76,8 +76,9 @@ static void copy_str( char *dst, size_t cap, const char *src )
 {
     if (!cap) return;
     if (!src) { dst[0] = 0; return; }
-    strncpy( dst, src, cap - 1 );
-    dst[cap - 1] = 0;
+    size_t n = strnlen( src, cap - 1 );
+    memcpy( dst, src, n );
+    dst[n] = 0;
 }
 
 struct endpoint
