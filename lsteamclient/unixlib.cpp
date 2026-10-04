@@ -364,6 +364,7 @@ static NTSTATUS steamclient_Steam_BGetCallback( Params *params, bool wow64 )
     u_CallbackMsg_t *u_msg, u_msg_tmp;
     auto *w_msg = &*params->w_msg;
 
+    bl_server_browser_pump(); /* Bannerlator server browser: deliver queued results on this (game) thread */
     if (!p_Steam_BGetCallback( params->pipe, &u_msg_tmp, params->ignored ))
         params->_ret = false;
     else
@@ -895,7 +896,7 @@ static NTSTATUS steamclient_get_unix_buffer( Params *params, bool wow64 )
 template< typename Params >
 static NTSTATUS steamclient_CreateInterface( Params *params, bool wow64 )
 {
-    params->_ret = p_CreateInterface( params->name, params->return_code );
+    params->_ret = bl_server_browser_override( params->name, p_CreateInterface( params->name, params->return_code ) );
     return 0;
 }
 

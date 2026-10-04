@@ -319,6 +319,7 @@ static NTSTATUS ISteamMatchmakingServers_RequestInternetServerList( Iface *iface
     MatchMakingKeyValuePair_t **filters = params->ppchFilters ? new MatchMakingKeyValuePair_t *[params->nFilters] : nullptr;
     for (int i = 0; filters && i < params->nFilters; i++) filters[i] = params->ppchFilters[i];
     w_request->u_request = iface->RequestInternetServerList( params->iApp, filters, params->nFilters, w_response ? u_response : nullptr );
+    bl_server_browser_bind( w_request, w_request->u_request );
     if (filters) delete[] filters;
 
     if (!w_request->u_request) delete u_response;
@@ -333,6 +334,7 @@ static NTSTATUS ISteamMatchmakingServers_RequestLANServerList( Iface *iface, Par
     SteamMatchmakingServerListResponse_106 *u_response = new SteamMatchmakingServerListResponse_106( w_response, params->_ret );
     struct w_request *w_request = u_response->w_request;
     w_request->u_request = iface->RequestLANServerList( params->iApp, w_response ? u_response : nullptr );
+    bl_server_browser_bind( w_request, w_request->u_request );
     if (!w_request->u_request) delete u_response;
     else w_request->u_response = u_response;
     return 0;
@@ -348,6 +350,7 @@ static NTSTATUS ISteamMatchmakingServers_RequestFriendsServerList( Iface *iface,
     MatchMakingKeyValuePair_t **filters = params->ppchFilters ? new MatchMakingKeyValuePair_t *[params->nFilters] : nullptr;
     for (int i = 0; filters && i < params->nFilters; i++) filters[i] = params->ppchFilters[i];
     w_request->u_request = iface->RequestFriendsServerList( params->iApp, filters, params->nFilters, w_response ? u_response : nullptr );
+    bl_server_browser_bind( w_request, w_request->u_request );
     if (filters) delete[] filters;
 
     if (!w_request->u_request) delete u_response;
@@ -365,6 +368,7 @@ static NTSTATUS ISteamMatchmakingServers_RequestFavoritesServerList( Iface *ifac
     MatchMakingKeyValuePair_t **filters = params->ppchFilters ? new MatchMakingKeyValuePair_t *[params->nFilters] : nullptr;
     for (int i = 0; filters && i < params->nFilters; i++) filters[i] = params->ppchFilters[i];
     w_request->u_request = iface->RequestFavoritesServerList( params->iApp, filters, params->nFilters, w_response ? u_response : nullptr );
+    bl_server_browser_bind( w_request, w_request->u_request );
     if (filters) delete[] filters;
 
     if (!w_request->u_request) delete u_response;
@@ -382,6 +386,7 @@ static NTSTATUS ISteamMatchmakingServers_RequestHistoryServerList( Iface *iface,
     MatchMakingKeyValuePair_t **filters = params->ppchFilters ? new MatchMakingKeyValuePair_t *[params->nFilters] : nullptr;
     for (int i = 0; filters && i < params->nFilters; i++) filters[i] = params->ppchFilters[i];
     w_request->u_request = iface->RequestHistoryServerList( params->iApp, filters, params->nFilters, w_response ? u_response : nullptr );
+    bl_server_browser_bind( w_request, w_request->u_request );
     delete[] filters;
 
     if (!w_request->u_request) delete u_response;
@@ -399,6 +404,7 @@ static NTSTATUS ISteamMatchmakingServers_RequestSpectatorServerList( Iface *ifac
     MatchMakingKeyValuePair_t **filters = params->ppchFilters ? new MatchMakingKeyValuePair_t *[params->nFilters] : nullptr;
     for (int i = 0; filters && i < params->nFilters; i++) filters[i] = params->ppchFilters[i];
     w_request->u_request = iface->RequestSpectatorServerList( params->iApp, filters, params->nFilters, w_response ? u_response : nullptr );
+    bl_server_browser_bind( w_request, w_request->u_request );
     delete[] filters;
 
     if (!w_request->u_request) delete u_response;
