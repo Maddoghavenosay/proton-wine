@@ -367,7 +367,9 @@ struct request
     int kind = kListInternet;
     std::string filter;
     u_ISteamMatchmakingServerListResponse_106 *response = nullptr;
-    std::deque<gameserveritem_t_165> items;   /* deque: pointers handed to the game stay valid */
+    std::deque<gameserveritem_t_165> items;   /* deque: pointers handed to the game stay valid; the list is
+                                               * filled COMPLETELY before the first callback (the PE layer sizes
+                                               * its details array from GetServerCount once), pings update in place */
     std::mutex lock;
     std::atomic<bool> cancel{ false };
     std::atomic<bool> refreshing{ false };
@@ -501,6 +503,7 @@ static void run_lan_scan( request *rq )
     }
     long long until = now_ms() + 2000;
     uint8_t buf[4096];
+    std::vector<gameserveritem_t_165> found;
     while (now_ms() < until && !rq->cancel)
     {
         struct sockaddr_in from = {};
@@ -510,9 +513,13 @@ static void run_lan_scan( request *rq )
         endpoint ep = { ntohl( from.sin_addr.s_addr ), ntohs( from.sin_port ), ntohs( from.sin_port ) };
         gameserveritem_t_165 it;
         if (!a2s_info( ep, &it, 1000 )) continue;
-        push_list_item( rq, append_item( rq, it ), true );
+        found.push_back( it );
     }
     close( fd );
+    /* Append everything first (final count), then tell the game. */
+    std::vector<int> idx;
+    for (auto &it : found) idx.push_back( append_item( rq, it ) );
+    for (int i : idx) { if (rq->cancel) break; push_list_item( rq, i, true ); }
 }
 
 static void run_request( request *rq )
@@ -534,21 +541,40 @@ static void run_request( request *rq )
                   + " complete items + " + std::to_string( res.targets.size() ) + " endpoints to ping ("
                   + std::to_string( now_ms() - t0 ) + " ms)" );
 
-        for (auto &it : res.details)
+        /* Fill the list completely before the first callback: complete items first, then one
+         * placeholder per endpoint (address known, no response yet). Indexes are stable from here. */
+        std::vector<int> target_idx( res.targets.size() );
+        {
+            std::lock_guard<std::mutex> g( rq->lock );
+            for (auto &it : res.details) rq->items.push_back( it );
+            for (size_t i = 0; i < res.targets.size(); i++)
+            {
+                gameserveritem_t_165 ph;
+                memset( &ph, 0, sizeof(ph) );
+                ph.m_NetAdr.m_unIP = res.targets[i].ip;
+                ph.m_NetAdr.m_usConnectionPort = res.targets[i].port;
+                ph.m_NetAdr.m_usQueryPort = res.targets[i].qport ? res.targets[i].qport : res.targets[i].port;
+                ph.m_nPing = -1;
+                ph.m_nAppID = rq->appid;
+                rq->items.push_back( ph );
+                target_idx[i] = (int)rq->items.size() - 1;
+            }
+        }
+        for (size_t i = 0; i < res.details.size(); i++)
         {
             if (rq->cancel) break;
-            push_list_item( rq, append_item( rq, it ), true );
+            push_list_item( rq, (int)i, true );
         }
 
-        /* Ping the bare endpoints with a pool of threads. Each success appends an item and tells
-         * the game; a non-answer gets a placeholder item reported as failed (what the real client
-         * does, so the game can show it greyed or drop it). */
+        /* Ping the endpoints with a pool of threads; each answer replaces its placeholder in place
+         * (same index, same address the game may already hold) and the game is told; a non-answer
+         * is reported as failed (what the real client does). */
         std::atomic<size_t> next{ 0 };
         std::atomic<int> answered{ 0 };
         std::vector<std::thread> pool;
         for (int t = 0; t < concurrency && t < (int)res.targets.size(); t++)
         {
-            pool.emplace_back( [rq, &res, &next, &answered]() {
+            pool.emplace_back( [rq, &res, &target_idx, &next, &answered]() {
                 for (;;)
                 {
                     if (rq->cancel) return;
@@ -556,18 +582,14 @@ static void run_request( request *rq )
                     if (i >= res.targets.size()) return;
                     gameserveritem_t_165 it;
                     bool got = a2s_info( res.targets[i], &it, 1000 );
-                    if (!got)
-                    {
-                        memset( &it, 0, sizeof(it) );
-                        it.m_NetAdr.m_unIP = res.targets[i].ip;
-                        it.m_NetAdr.m_usConnectionPort = res.targets[i].port;
-                        it.m_NetAdr.m_usQueryPort = res.targets[i].qport ? res.targets[i].qport : res.targets[i].port;
-                        it.m_nPing = -1;
-                        it.m_nAppID = rq->appid;
-                    }
-                    else answered++;
                     if (rq->cancel) return;
-                    push_list_item( rq, append_item( rq, it ), got );
+                    if (got)
+                    {
+                        answered++;
+                        std::lock_guard<std::mutex> g( rq->lock );
+                        rq->items[target_idx[i]] = it;
+                    }
+                    push_list_item( rq, target_idx[i], got );
                 }
             } );
         }
@@ -820,7 +842,13 @@ extern "C" void *bl_server_browser_override( const char *version, void *valve_if
 extern "C" void bl_server_browser_pump( void )
 {
     if (!g_enabled) return;
-    for (int budget = 0; budget < 512; budget++)
+    /* RunCallbacks loops on Steam_BGetCallback until it comes back empty; feeding it continuously
+     * would keep the game inside that loop for the whole refresh. Deliver one batch per ~frame. */
+    static long long last_batch = 0;
+    long long now = now_ms();
+    if (now - last_batch < 16) return;
+    last_batch = now;
+    for (int budget = 0; budget < 48; budget++)
     {
         std::unique_ptr<pending> p;
         {

@@ -430,6 +430,10 @@ struct w_request
         UINT64 __pad;
     };
     UINT64 details_count;
+    /* Bannerlator server browser (64-bit only): unix item pointers cached per index so the game's
+     * sort-driven GetServerDetails storm never crosses into the unix side. PE-side use only. */
+    UINT64 bl_ptrs;
+    UINT64 bl_count;
 };
 
 #include <poppack.h>
