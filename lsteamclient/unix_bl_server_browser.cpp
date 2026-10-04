@@ -410,7 +410,7 @@ static void run_lan_scan( request *rq )
 
 static void run_request( request *rq )
 {
-    const int concurrency = 24;
+    const int concurrency = 48; /* GetServerList hands back up to 5000 endpoints; ~1 s timeout each */
     list_result res;
     bool ok = true;
 
@@ -451,7 +451,7 @@ static void run_request( request *rq )
                     size_t i = next.fetch_add( 1 );
                     if (i >= res.targets.size()) return;
                     gameserveritem_t_165 it;
-                    bool got = a2s_info( res.targets[i], &it, 1500 );
+                    bool got = a2s_info( res.targets[i], &it, 1000 );
                     int idx;
                     {
                         std::lock_guard<std::mutex> g( rq->lock );
