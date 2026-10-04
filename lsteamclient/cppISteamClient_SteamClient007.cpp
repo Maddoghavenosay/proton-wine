@@ -261,7 +261,7 @@ NTSTATUS ISteamClient_SteamClient007_GetISteamGenericInterface( void *args )
 {
     struct ISteamClient_SteamClient007_GetISteamGenericInterface_params *params = (struct ISteamClient_SteamClient007_GetISteamGenericInterface_params *)args;
     struct u_ISteamClient_SteamClient007 *iface = (struct u_ISteamClient_SteamClient007 *)params->u_iface;
-    params->_ret = iface->GetISteamGenericInterface( params->hSteamUser, params->hSteamPipe, params->pchVersion );
+    params->_ret = bl_server_browser_override( params->pchVersion, iface->GetISteamGenericInterface( params->hSteamUser, params->hSteamPipe, params->pchVersion ) );
     return 0;
 }
 
@@ -270,7 +270,7 @@ NTSTATUS wow64_ISteamClient_SteamClient007_GetISteamGenericInterface( void *args
 {
     struct wow64_ISteamClient_SteamClient007_GetISteamGenericInterface_params *params = (struct wow64_ISteamClient_SteamClient007_GetISteamGenericInterface_params *)args;
     struct u_ISteamClient_SteamClient007 *iface = (struct u_ISteamClient_SteamClient007 *)params->u_iface;
-    params->_ret = iface->GetISteamGenericInterface( params->hSteamUser, params->hSteamPipe, params->pchVersion );
+    params->_ret = bl_server_browser_override( params->pchVersion, iface->GetISteamGenericInterface( params->hSteamUser, params->hSteamPipe, params->pchVersion ) );
     return 0;
 }
 #endif

@@ -895,7 +895,7 @@ static NTSTATUS steamclient_get_unix_buffer( Params *params, bool wow64 )
 template< typename Params >
 static NTSTATUS steamclient_CreateInterface( Params *params, bool wow64 )
 {
-    params->_ret = p_CreateInterface( params->name, params->return_code );
+    params->_ret = bl_server_browser_override( params->name, p_CreateInterface( params->name, params->return_code ) );
     return 0;
 }
 
