@@ -1,6 +1,8 @@
 #include <stddef.h>
 #include "steamclient_private.h"
 
+WINE_DEFAULT_DEBUG_CHANNEL(steamclient);
+
 /* ── Bannerlator server browser: PE-side item pointer cache ─────────────────────────────────
  * With the Bannerlator browser (BL_SERVER_BROWSER=1) the unix side keeps every item at a stable
  * address for the life of the request (deque; refresh clears it, and RefreshQuery/ReleaseRequest
@@ -81,7 +83,6 @@ void bl_cache_reset( struct w_request *request )
     request->details_count = 0;
 }
 
-WINE_DEFAULT_DEBUG_CHANNEL(steamclient);
 
 void __thiscall winISteamMatchmakingServers_SteamMatchMakingServers001_CancelQuery(struct w_iface *_this, uint32_t eType)
 {
