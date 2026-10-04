@@ -355,14 +355,18 @@ static std::string build_filter( MatchMakingKeyValuePair_t **filters, uint32_t n
 {
     std::string f;
     bool have_appid = false;
-    for (uint32_t i = 0; filters && i < n; i++)
+    /* Steamworks quirk: ppchFilters is a pointer to ONE pointer, and *ppchFilters is the start of a
+     * contiguous array of n pairs (not n pointers). Reading filters[i] for i > 0 walks into the key
+     * text of pair 0. */
+    MatchMakingKeyValuePair_t *base = (filters && n) ? filters[0] : nullptr;
+    for (uint32_t i = 0; base && i < n; i++)
     {
-        if (!filters[i]) continue;
-        if (!strcmp( filters[i]->m_szKey, "appid" )) have_appid = true;
-        f += "\\";
-        f += filters[i]->m_szKey;
-        f += "\\";
-        f += filters[i]->m_szValue;
+        const MatchMakingKeyValuePair_t &kv = base[i];
+        if (!kv.m_szKey[0]) continue;
+        std::string key( kv.m_szKey, strnlen( kv.m_szKey, sizeof(kv.m_szKey) ) );
+        std::string val( kv.m_szValue, strnlen( kv.m_szValue, sizeof(kv.m_szValue) ) );
+        if (key == "appid") have_appid = true;
+        f += "\\" + key + "\\" + val;
     }
     if (!have_appid) f = "\\appid\\" + std::to_string( appid ) + f;
     return f;
