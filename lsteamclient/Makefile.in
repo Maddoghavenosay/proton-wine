@@ -273,6 +273,7 @@ SOURCES = \
 	unix_steam_networking_manual.cpp \
 	unix_steam_remote_storage_manual.cpp \
 	unix_steam_utils_manual.cpp \
+	unix_bl_server_browser.cpp \
 	unix_steam_matchmaking_manual.cpp \
 	unixlib.cpp \
 	owned_dlcs.cpp \
