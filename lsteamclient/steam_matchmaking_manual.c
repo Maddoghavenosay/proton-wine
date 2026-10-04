@@ -1,3 +1,4 @@
+#include <stddef.h>
 #include "steamclient_private.h"
 
 /* ── Bannerlator server browser: PE-side item pointer cache ─────────────────────────────────
@@ -15,6 +16,58 @@ BOOL bl_browser_active(void)
         v = (GetEnvironmentVariableA( "BL_SERVER_BROWSER", b, sizeof(b) ) && b[0] && b[0] != '0') ? 1 : 0;
     }
     return v == 1;
+}
+
+/* x86-64 front (blsteambrowser.dll, next to this DLL): the game's sort-driven
+ * GetServerDetails/GetServerCount/IsRefreshing stay inside the x86 JIT. 64-bit only. */
+#ifdef _WIN64
+typedef void *(__cdecl *bl_shim_create_fn)( UINT32, void *, UINT32, UINT32, UINT32, UINT32 );
+static bl_shim_create_fn bl_shim_create_ptr;
+static int bl_shim_state; /* 0 untried, 1 ok, -1 unavailable */
+static struct { struct w_iface *real; struct w_iface *shim; } bl_shims[8];
+static int bl_shim_count;
+
+static void bl_shim_load(void)
+{
+    WCHAR path[MAX_PATH];
+    HMODULE self, dll;
+    WCHAR *p;
+    bl_shim_state = -1;
+    if (!GetModuleHandleExW( GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+                             (const WCHAR *)bl_shim_load, &self )) return;
+    if (!GetModuleFileNameW( self, path, MAX_PATH )) return;
+    for (p = path + lstrlenW( path ); p > path && p[-1] != '\\'; p--) ;
+    if (p == path) return;
+    lstrcpyW( p, L"blsteambrowser.dll" );
+    if (!(dll = LoadLibraryW( path ))) { WARN( "no %s (%lu) — browser calls stay ARM64EC\n", debugstr_w( path ), GetLastError() ); return; }
+    bl_shim_create_ptr = (bl_shim_create_fn)GetProcAddress( dll, "bl_shim_create" );
+    if (bl_shim_create_ptr) { bl_shim_state = 1; TRACE( "loaded %s\n", debugstr_w( path ) ); }
+}
+#endif
+
+struct w_iface *bl_shim_wrap( const char *name, struct w_iface *real )
+{
+#ifdef _WIN64
+    UINT32 version;
+    void *shim;
+    int i;
+    if (!real || !bl_browser_active()) return real;
+    if (!strcmp( name, "SteamMatchMakingServers002" )) version = 2;
+    else if (!strcmp( name, "SteamMatchMakingServers003" )) version = 3;
+    else return real;
+    if (!bl_shim_state) bl_shim_load();
+    if (bl_shim_state < 0) return real;
+    for (i = 0; i < bl_shim_count; i++) if (bl_shims[i].real == real) return bl_shims[i].shim;
+    shim = bl_shim_create_ptr( version, real, sizeof(gameserveritem_t_165),
+                               offsetof( struct w_request, bl_items ), offsetof( struct w_request, bl_items_count ),
+                               offsetof( struct w_request, bl_refreshing ) );
+    if (!shim) return real;
+    if (bl_shim_count < 8) { bl_shims[bl_shim_count].real = real; bl_shims[bl_shim_count].shim = shim; bl_shim_count++; }
+    TRACE( "%s: x86 front %p over %p\n", name, shim, real );
+    return shim;
+#else
+    return real;
+#endif
 }
 
 void bl_cache_reset( struct w_request *request )

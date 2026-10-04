@@ -322,6 +322,7 @@ done:
     LeaveCriticalSection(&steamclient_cs);
     if (!ret) ERR("Don't recognize interface name: %s\n", name);
     SetLastError(0);
+    if (ret && !strncmp( name, "SteamMatchMakingServers", 23 )) return bl_shim_wrap( name, ret );
     return ret;
 }
 

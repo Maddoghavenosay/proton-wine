@@ -367,16 +367,38 @@ struct request
     int kind = kListInternet;
     std::string filter;
     u_ISteamMatchmakingServerListResponse_106 *response = nullptr;
-    std::deque<gameserveritem_t_165> items;   /* deque: pointers handed to the game stay valid; the list is
-                                               * filled COMPLETELY before the first callback (the PE layer sizes
-                                               * its details array from GetServerCount once), pings update in place */
+    /* One contiguous array per (re)fill, built COMPLETELY before the first callback (the PE layer
+     * sizes its details table from GetServerCount once; the x86 front indexes it directly), then
+     * updated in place as pings land. Stable addresses until release / refresh. */
+    gameserveritem_t_165 *items = nullptr;
+    size_t n = 0;
     std::mutex lock;
     std::atomic<bool> cancel{ false };
     std::atomic<bool> refreshing{ false };
     std::thread worker;
+    struct w_request *w = nullptr; /* PE-side handle the game holds (bl_server_browser_bind) */
 
-    ~request() { if (worker.joinable()) worker.join(); }
+    ~request() { if (worker.joinable()) worker.join(); delete[] items; }
 };
+
+/* Publish the array to the game-side handle (read lock-free by the x86 front): count last. */
+static void publish( request *rq )
+{
+    if (!rq->w) return;
+    rq->w->bl_items = (UINT64)(UINT_PTR)rq->items;
+    __atomic_store_n( &rq->w->bl_items_count, (UINT32)rq->n, __ATOMIC_RELEASE );
+}
+static void unpublish( request *rq )
+{
+    if (!rq->w) return;
+    __atomic_store_n( &rq->w->bl_items_count, 0u, __ATOMIC_RELEASE );
+    rq->w->bl_items = 0;
+}
+static void set_refreshing( request *rq, bool on )
+{
+    rq->refreshing = on;
+    if (rq->w) __atomic_store_n( &rq->w->bl_refreshing, on ? 1u : 0u, __ATOMIC_RELEASE );
+}
 
 /* ── results queue: filled by workers, drained on the game thread by the pump ───────────── */
 
@@ -476,11 +498,21 @@ static std::string build_filter( MatchMakingKeyValuePair_t **filters, uint32_t n
     return f;
 }
 
-static int append_item( request *rq, const gameserveritem_t_165 &it )
+/* Replace the request's array with a new one (final size). Old array freed after unpublishing. */
+static void set_items( request *rq, const std::vector<gameserveritem_t_165> &src )
 {
-    std::lock_guard<std::mutex> g( rq->lock );
-    rq->items.push_back( it );
-    return (int)rq->items.size() - 1;
+    gameserveritem_t_165 *arr = src.empty() ? nullptr : new gameserveritem_t_165[src.size()];
+    for (size_t i = 0; i < src.size(); i++) arr[i] = src[i];
+    gameserveritem_t_165 *old;
+    {
+        std::lock_guard<std::mutex> g( rq->lock );
+        unpublish( rq );
+        old = rq->items;
+        rq->items = arr;
+        rq->n = src.size();
+        publish( rq );
+    }
+    delete[] old;
 }
 
 static void run_lan_scan( request *rq )
@@ -516,10 +548,9 @@ static void run_lan_scan( request *rq )
         found.push_back( it );
     }
     close( fd );
-    /* Append everything first (final count), then tell the game. */
-    std::vector<int> idx;
-    for (auto &it : found) idx.push_back( append_item( rq, it ) );
-    for (int i : idx) { if (rq->cancel) break; push_list_item( rq, i, true ); }
+    /* Build the whole array first (final count), then tell the game. */
+    set_items( rq, found );
+    for (size_t i = 0; i < found.size(); i++) { if (rq->cancel) break; push_list_item( rq, (int)i, true ); }
 }
 
 static void run_request( request *rq )
@@ -548,8 +579,7 @@ static void run_request( request *rq )
          * placeholder per endpoint (address known, no response yet). Indexes are stable from here. */
         std::vector<int> target_idx( res.targets.size() );
         {
-            std::lock_guard<std::mutex> g( rq->lock );
-            for (auto &it : res.details) rq->items.push_back( it );
+            std::vector<gameserveritem_t_165> all( res.details );
             for (size_t i = 0; i < res.targets.size(); i++)
             {
                 gameserveritem_t_165 ph;
@@ -559,9 +589,10 @@ static void run_request( request *rq )
                 ph.m_NetAdr.m_usQueryPort = res.targets[i].qport ? res.targets[i].qport : res.targets[i].port;
                 ph.m_nPing = -1;
                 ph.m_nAppID = rq->appid;
-                rq->items.push_back( ph );
-                target_idx[i] = (int)rq->items.size() - 1;
+                all.push_back( ph );
+                target_idx[i] = (int)all.size() - 1;
             }
+            set_items( rq, all );
         }
         for (size_t i = 0; i < res.details.size(); i++)
         {
@@ -590,7 +621,7 @@ static void run_request( request *rq )
                     {
                         answered++;
                         std::lock_guard<std::mutex> g( rq->lock );
-                        rq->items[target_idx[i]] = it;
+                        if ((size_t)target_idx[i] < rq->n) rq->items[target_idx[i]] = it;
                     }
                     push_list_item( rq, target_idx[i], got );
                 }
@@ -602,10 +633,10 @@ static void run_request( request *rq )
     }
     /* friends / favorites / history / spectator: nothing to list on this path */
 
-    rq->refreshing = false;
     size_t n;
-    { std::lock_guard<std::mutex> g( rq->lock ); n = rq->items.size(); }
+    { std::lock_guard<std::mutex> g( rq->lock ); n = rq->n; }
     if (!rq->cancel) push_list_complete( rq, (!ok || n == 0) ? eNoServersListedOnMasterServer : eServerResponded );
+    else set_refreshing( rq, false );
 }
 
 static request *start_request( uint32_t appid, int kind, MatchMakingKeyValuePair_t **filters, uint32_t n,
@@ -654,6 +685,7 @@ struct browser_core
         rq->cancel = true;
         rq->response = nullptr;
         TRACE( "release %p\n", rq );
+        { std::lock_guard<std::mutex> g( rq->lock ); unpublish( rq ); rq->w = nullptr; }
         delete rq; /* joins the worker; queued results for it are dropped by the pump */
     }
     gameserveritem_t_165 *details( void *h, int32_t i )
@@ -661,7 +693,7 @@ struct browser_core
         request *rq = (request *)h;
         if (!rq || !is_live( rq )) return nullptr;
         std::lock_guard<std::mutex> g( rq->lock );
-        if (i < 0 || (size_t)i >= rq->items.size()) return nullptr;
+        if (i < 0 || (size_t)i >= rq->n) return nullptr;
         return &rq->items[i];
     }
     void cancel( void *h ) { request *rq = (request *)h; if (rq && is_live( rq )) rq->cancel = true; }
@@ -671,8 +703,8 @@ struct browser_core
         if (!rq || !is_live( rq ) || rq->refreshing) return;
         if (rq->worker.joinable()) rq->worker.join();
         rq->cancel = false;
-        { std::lock_guard<std::mutex> g( rq->lock ); rq->items.clear(); }
-        rq->refreshing = true;
+        set_items( rq, std::vector<gameserveritem_t_165>() ); /* empty + unpublished until rebuilt */
+        set_refreshing( rq, true );
         rq->worker = std::thread( run_request, rq );
     }
     int8_t is_refreshing( void *h ) { request *rq = (request *)h; return rq && is_live( rq ) && rq->refreshing ? 1 : 0; }
@@ -681,7 +713,7 @@ struct browser_core
         request *rq = (request *)h;
         if (!rq || !is_live( rq )) return 0;
         std::lock_guard<std::mutex> g( rq->lock );
-        return (int32_t)rq->items.size();
+        return (int32_t)rq->n;
     }
     void refresh_server( void *h, int32_t i )
     {
@@ -692,7 +724,7 @@ struct browser_core
         std::thread( [rq, ep, i]() {
             gameserveritem_t_165 fresh;
             bool got = a2s_info( ep, &fresh, 1000 );
-            if (got) { std::lock_guard<std::mutex> g( rq->lock ); if ((size_t)i < rq->items.size()) rq->items[i] = fresh; }
+            if (got) { std::lock_guard<std::mutex> g( rq->lock ); if ((size_t)i < rq->n) rq->items[i] = fresh; }
             push_list_item( rq, i, got );
         } ).detach();
     }
@@ -839,6 +871,21 @@ extern "C" void *bl_server_browser_override( const char *version, void *valve_if
     return valve_iface;
 }
 
+/* Called by the manual layer right after a Request*ServerList created the game's handle: ties the
+ * PE-side w_request to our request so the item array / count / refresh flag can be published into
+ * it for the x86 front. No-op for Valve's requests. */
+extern "C" void bl_server_browser_bind( void *w_request, void *u_request )
+{
+    request *rq = (request *)u_request;
+    if (!g_enabled || !rq || !w_request || !is_live( rq )) return;
+    std::lock_guard<std::mutex> g( rq->lock );
+    rq->w = (struct w_request *)w_request;
+    rq->w->bl_items = 0;
+    rq->w->bl_items_count = 0;
+    rq->w->bl_refreshing = rq->refreshing ? 1 : 0;
+    if (rq->items) publish( rq );
+}
+
 /* Game-thread pump: delivers queued results through the response wrappers (which TRACE and
  * must therefore run on a Wine thread). Called from the Steam_BGetCallback dispatcher, i.e.
  * every SteamAPI_RunCallbacks. */
@@ -875,10 +922,14 @@ extern "C" void bl_server_browser_pump( void )
             }
             break;
         case PEND_LIST_COMPLETE:
-            if (p->rq && is_live( p->rq ) && p->rq->response && !p->rq->cancel)
+            if (p->rq && is_live( p->rq ))
             {
-                TRACE( "request %p complete, result %u, %d items\n", p->rq, p->result, g_core.count( p->rq ) );
-                p->rq->response->RefreshComplete( p->rq, p->result );
+                set_refreshing( p->rq, false );
+                if (p->rq->response && !p->rq->cancel)
+                {
+                    TRACE( "request %p complete, result %u, %d items\n", p->rq, p->result, g_core.count( p->rq ) );
+                    p->rq->response->RefreshComplete( p->rq, p->result );
+                }
             }
             break;
         case PEND_PING:

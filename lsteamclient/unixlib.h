@@ -434,6 +434,12 @@ struct w_request
      * sort-driven GetServerDetails storm never crosses into the unix side. PE-side use only. */
     UINT64 bl_ptrs;
     UINT64 bl_count;
+    /* Written by the unix browser (bl_server_browser_bind), read by the x86-64 front
+     * (blsteambrowser.dll) without any call: the item array, its length, the refresh flag. */
+    UINT64 bl_items;
+    UINT32 bl_items_count;
+    UINT32 bl_refreshing;
+    UINT64 bl_shim;
 };
 
 #include <poppack.h>

@@ -46,6 +46,7 @@ void *get_unix_buffer( struct u_buffer buf );
 /* Bannerlator server browser helpers (steam_matchmaking_manual.c) */
 BOOL bl_browser_active(void);
 void bl_cache_reset( struct w_request *request );
+struct w_iface *bl_shim_wrap( const char *name, struct w_iface *real );
 
 void init_rtti( char *base );
 
