@@ -363,6 +363,8 @@ enum { eServerResponded = 0, eServerFailedToRespond = 1, eNoServersListedOnMaste
 
 struct request
 {
+    uint64_t id = 0;       /* unique per request: results are matched by id, never by pointer — a new
+                            * request can reuse a freed one's address (seen in the field: ABA crash) */
     uint32_t appid = 0;
     int kind = kListInternet;
     std::string filter;
@@ -418,6 +420,7 @@ struct pending
 {
     pend_kind kind;
     request *rq = nullptr;
+    uint64_t rq_id = 0;
     int idx = 0;
     bool ok = false;
     uint32_t result = 0;
@@ -452,15 +455,26 @@ static void push_log( const std::string &text )
 static void push_list_item( request *rq, int idx, bool ok )
 {
     auto p = std::unique_ptr<pending>( new pending() );
-    p->kind = PEND_LIST_ITEM; p->rq = rq; p->idx = idx; p->ok = ok;
+    p->kind = PEND_LIST_ITEM; p->rq = rq; p->rq_id = rq->id; p->idx = idx; p->ok = ok;
     push_pending( std::move( p ) );
 }
 
 static void push_list_complete( request *rq, uint32_t result )
 {
     auto p = std::unique_ptr<pending>( new pending() );
-    p->kind = PEND_LIST_COMPLETE; p->rq = rq; p->result = result;
+    p->kind = PEND_LIST_COMPLETE; p->rq = rq; p->rq_id = rq->id; p->result = result;
     push_pending( std::move( p ) );
+}
+
+/* Drop every queued result for a request (called at release, before the object dies). */
+static void purge_pending( uint64_t id )
+{
+    std::lock_guard<std::mutex> g( g_pending_lock );
+    for (auto it = g_pending.begin(); it != g_pending.end();)
+    {
+        if ((*it)->rq_id == id && ((*it)->kind == PEND_LIST_ITEM || (*it)->kind == PEND_LIST_COMPLETE)) it = g_pending.erase( it );
+        else ++it;
+    }
 }
 
 /* Single-server query cancellation: ids handed out by CancelServerQuery. */
@@ -642,7 +656,9 @@ static void run_request( request *rq )
 static request *start_request( uint32_t appid, int kind, MatchMakingKeyValuePair_t **filters, uint32_t n,
                                u_ISteamMatchmakingServerListResponse_106 *response )
 {
+    static std::atomic<uint64_t> next_id{ 1 };
     request *rq = new request();
+    rq->id = next_id.fetch_add( 1 );
     rq->appid = appid;
     rq->kind = kind;
     rq->filter = build_filter( filters, n, appid );
@@ -665,6 +681,15 @@ static bool is_live( request *rq )
     return false;
 }
 
+/* The live request with this id, or null: the pump resolves queued results through the id so a
+ * result queued for a released request can never land on a newer one at the same address. */
+static request *live_by_id( uint64_t id )
+{
+    std::lock_guard<std::mutex> g( g_live_lock );
+    for (request *r : g_live) if (r->id == id) return r;
+    return nullptr;
+}
+
 struct browser_core
 {
     void *request_list( int kind, uint32_t app, MatchMakingKeyValuePair_t **f, uint32_t n,
@@ -684,9 +709,11 @@ struct browser_core
         }
         rq->cancel = true;
         rq->response = nullptr;
-        TRACE( "release %p\n", rq );
+        TRACE( "release %p id %llu\n", rq, (unsigned long long)rq->id );
         { std::lock_guard<std::mutex> g( rq->lock ); unpublish( rq ); rq->w = nullptr; }
-        delete rq; /* joins the worker; queued results for it are dropped by the pump */
+        purge_pending( rq->id );
+        delete rq; /* joins the worker (and its pingers) first */
+        purge_pending( 0 ); /* no-op guard: nothing should carry id 0 */
     }
     gameserveritem_t_165 *details( void *h, int32_t i )
     {
@@ -915,20 +942,23 @@ extern "C" void bl_server_browser_pump( void )
             TRACE( "%s\n", p->text.c_str() );
             break;
         case PEND_LIST_ITEM:
-            if (p->rq && is_live( p->rq ) && p->rq->response && !p->rq->cancel)
+            if (request *rq = live_by_id( p->rq_id ))
             {
-                if (p->ok) p->rq->response->ServerResponded( p->rq, p->idx );
-                else p->rq->response->ServerFailedToRespond( p->rq, p->idx );
+                if (rq->response && !rq->cancel && (size_t)p->idx < rq->n)
+                {
+                    if (p->ok) rq->response->ServerResponded( rq, p->idx );
+                    else rq->response->ServerFailedToRespond( rq, p->idx );
+                }
             }
             break;
         case PEND_LIST_COMPLETE:
-            if (p->rq && is_live( p->rq ))
+            if (request *rq = live_by_id( p->rq_id ))
             {
-                set_refreshing( p->rq, false );
-                if (p->rq->response && !p->rq->cancel)
+                set_refreshing( rq, false );
+                if (rq->response && !rq->cancel)
                 {
-                    TRACE( "request %p complete, result %u, %d items\n", p->rq, p->result, g_core.count( p->rq ) );
-                    p->rq->response->RefreshComplete( p->rq, p->result );
+                    TRACE( "request %p id %llu complete, result %u, %d items\n", rq, (unsigned long long)rq->id, p->result, g_core.count( rq ) );
+                    rq->response->RefreshComplete( rq, p->result );
                 }
             }
             break;
