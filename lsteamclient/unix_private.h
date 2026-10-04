@@ -155,5 +155,6 @@ extern unsigned int steamclient_unix_path_to_dos_path( bool api_result, const ch
 /* Bannerlator server browser (unix_bl_server_browser.cpp): returns our ISteamMatchmakingServers
  * when BL_SERVER_BROWSER=1, else the pointer Valve's client handed out. */
 extern "C" void *bl_server_browser_override( const char *version, void *valve_iface );
+extern "C" void bl_server_browser_pump( void );
 
 #endif /* __STEAMCLIENT_UNIX_PRIVATE_H */

@@ -11,19 +11,23 @@
  * unuseable") and the game hangs. Everything else the game asks of Steam goes through the
  * app's session host and works, so this file supplies the one missing piece:
  *
- *   - the server LIST comes from the app's session host over a loopback socket
- *     (BL_SB_PORT; the host asks Steam's master server through its logged-in session),
- *   - server DETAILS come from the host when it has them, otherwise from A2S_INFO pings
- *     sent from here (plain UDP),
+ *   - the server LIST comes from the app over a loopback socket (BL_SB_PORT; the app asks
+ *     Steam's Web API GetServerList with the session's web token),
+ *   - server DETAILS come from A2S_INFO pings sent from here (plain UDP),
  *   - players / rules / single-server pings are A2S_PLAYER / A2S_RULES / A2S_INFO,
  *   - results reach the game through the same response objects the manual layer wraps.
+ *
+ * Threading: the network work runs on plain pthreads, which have NO Wine TEB. Nothing on
+ * those threads may touch Wine (no TRACE, no response wrappers — the wrappers TRACE). They
+ * only queue results; bl_server_browser_pump(), called on the game thread from the
+ * Steam_BGetCallback dispatcher (RunCallbacks, every frame), delivers the callbacks and logs.
  *
  * Opt-in: BL_SERVER_BROWSER=1 in the game's environment (the app sets it for Headless Steam
  * launches only); without it Valve's interface is handed out unchanged.
  *
  * Host protocol (text, one request per connection):
  *   -> "LIST <appid> <filter>\n"            filter = "\key\value\key\value" (may be empty)
- *   <- "S <ip> <port>\n"                      ip:port only — we ping it
+ *   <- "S <ip> <port> [qport]\n"              endpoint only — we ping it
  *   <- "D <ip> <port> <qport> <ping> <players> <max> <bots> <secure> <password> <appid>
  *        <version>\t<map>\t<gamedir>\t<desc>\t<name>\t<tags>\n"   full item — no ping needed
  *   <- "END\n"                                (or "ERR <text>\n")
@@ -32,6 +36,7 @@
 #include "unix_private.h"
 
 #include <arpa/inet.h>
+#include <dlfcn.h>
 #include <errno.h>
 #include <netinet/in.h>
 #include <poll.h>
@@ -42,6 +47,7 @@
 
 #include <atomic>
 #include <deque>
+#include <memory>
 #include <mutex>
 #include <string>
 #include <thread>
@@ -50,6 +56,27 @@
 WINE_DEFAULT_DEBUG_CHANNEL(steamclient);
 
 namespace {
+
+/* ── logging that is safe from any thread (Android log, no Wine involved) ──────────────── */
+
+static void alog( const char *fmt, ... )
+{
+    typedef int (*log_fn)( int, const char *, const char *, ... );
+    static log_fn fn = nullptr;
+    static bool tried = false;
+    if (!tried)
+    {
+        tried = true;
+        if (void *h = dlopen( "liblog.so", RTLD_NOW )) fn = (log_fn)dlsym( h, "__android_log_print" );
+    }
+    if (!fn) return;
+    char buf[1024];
+    va_list ap;
+    va_start( ap, fmt );
+    vsnprintf( buf, sizeof(buf), fmt, ap );
+    va_end( ap );
+    fn( 4 /* ANDROID_LOG_INFO */, "lsteamclient", "sb: %s", buf );
+}
 
 /* ── small helpers ─────────────────────────────────────────────────────────────────────── */
 
@@ -124,7 +151,7 @@ static bool a2s_query( uint32_t ip, uint16_t port, const std::vector<uint8_t> &q
         if (sendto( fd, pkt.data(), pkt.size(), 0, (struct sockaddr *)&sa, sizeof(sa) ) < 0) break;
         ssize_t n = recvfrom( fd, buf, sizeof(buf), 0, nullptr, nullptr );
         if (n < 5 || memcmp( buf, A2S_HEADER, 4 )) break;
-        if (buf[4] == 0x41 && n >= 9) /* challenge: resend with it appended (or replacing -1) */
+        if (buf[4] == 0x41 && n >= 9) /* challenge: resend with it */
         {
             std::vector<uint8_t> q( A2S_HEADER, A2S_HEADER + 4 );
             q.insert( q.end(), query.begin(), query.end() );
@@ -219,7 +246,7 @@ static bool a2s_info( const endpoint &ep, gameserveritem_t_165 *it, int timeout_
     return true;
 }
 
-/* ── list source: the app's session host ───────────────────────────────────────────────── */
+/* ── list source: the app's session service ────────────────────────────────────────────── */
 
 struct list_result
 {
@@ -251,7 +278,6 @@ static bool parse_ip( const char *s, uint32_t *out )
 
 static void parse_detail_line( const std::string &line, list_result &res )
 {
-    /* "D ip port qport ping players max bots secure password appid version\tmap\tgamedir\tdesc\tname\ttags" */
     char ip[64];
     unsigned port, qport, players, maxp, bots, secure, password, appid, version;
     int ping;
@@ -270,14 +296,14 @@ static void parse_detail_line( const std::string &line, list_result &res )
     it.m_nAppID = appid; it.m_nServerVersion = version;
     const char *p = line.c_str() + consumed;
     if (*p == '\t') p++;
-    const char *fields[5] = { it.m_szMap, it.m_szGameDir, it.m_szGameDescription, it.m_szServerName, it.m_szGameTags };
+    char *fields[5] = { it.m_szMap, it.m_szGameDir, it.m_szGameDescription, it.m_szServerName, it.m_szGameTags };
     const size_t caps[5] = { sizeof(it.m_szMap), sizeof(it.m_szGameDir), sizeof(it.m_szGameDescription),
                              sizeof(it.m_szServerName), sizeof(it.m_szGameTags) };
     for (int i = 0; i < 5; i++)
     {
         const char *e = strchr( p, '\t' );
         std::string v = e ? std::string( p, e - p ) : std::string( p );
-        copy_str( (char *)fields[i], caps[i], v.c_str() );
+        copy_str( fields[i], caps[i], v.c_str() );
         if (!e) break;
         p = e + 1;
     }
@@ -345,11 +371,87 @@ struct request
     std::mutex lock;
     std::atomic<bool> cancel{ false };
     std::atomic<bool> refreshing{ false };
-    std::atomic<bool> released{ false };
     std::thread worker;
 
     ~request() { if (worker.joinable()) worker.join(); }
 };
+
+/* ── results queue: filled by workers, drained on the game thread by the pump ───────────── */
+
+enum pend_kind
+{
+    PEND_LIST_ITEM,      /* rq, idx, ok */
+    PEND_LIST_COMPLETE,  /* rq, result */
+    PEND_PING,           /* ping_resp, ok, item */
+    PEND_PLAYERS,        /* players_resp, ok, players */
+    PEND_RULES,          /* rules_resp, ok, rules */
+    PEND_LOG,            /* text */
+};
+
+struct player_row { std::string name; int32_t score; float time; };
+
+struct pending
+{
+    pend_kind kind;
+    request *rq = nullptr;
+    int idx = 0;
+    bool ok = false;
+    uint32_t result = 0;
+    int query_id = 0;
+    u_ISteamMatchmakingPingResponse *ping_resp = nullptr;
+    u_ISteamMatchmakingPlayersResponse *players_resp = nullptr;
+    u_ISteamMatchmakingRulesResponse *rules_resp = nullptr;
+    gameserveritem_t_165 item;
+    std::vector<player_row> players;
+    std::vector<std::pair<std::string, std::string>> rules;
+    std::string text;
+};
+
+static std::mutex g_pending_lock;
+static std::deque<std::unique_ptr<pending>> g_pending;
+
+static void push_pending( std::unique_ptr<pending> p )
+{
+    std::lock_guard<std::mutex> g( g_pending_lock );
+    g_pending.push_back( std::move( p ) );
+}
+
+static void push_log( const std::string &text )
+{
+    alog( "%s", text.c_str() );
+    auto p = std::unique_ptr<pending>( new pending() );
+    p->kind = PEND_LOG;
+    p->text = text;
+    push_pending( std::move( p ) );
+}
+
+static void push_list_item( request *rq, int idx, bool ok )
+{
+    auto p = std::unique_ptr<pending>( new pending() );
+    p->kind = PEND_LIST_ITEM; p->rq = rq; p->idx = idx; p->ok = ok;
+    push_pending( std::move( p ) );
+}
+
+static void push_list_complete( request *rq, uint32_t result )
+{
+    auto p = std::unique_ptr<pending>( new pending() );
+    p->kind = PEND_LIST_COMPLETE; p->rq = rq; p->result = result;
+    push_pending( std::move( p ) );
+}
+
+/* Single-server query cancellation: ids handed out by CancelServerQuery. */
+static std::atomic<int> g_query_id{ 1 };
+static std::mutex g_query_lock;
+static std::vector<int> g_cancelled;
+
+static bool query_cancelled( int id )
+{
+    std::lock_guard<std::mutex> g( g_query_lock );
+    for (int c : g_cancelled) if (c == id) return true;
+    return false;
+}
+
+/* ── workers (plain pthreads: NO Wine calls in here) ───────────────────────────────────── */
 
 static std::string build_filter( MatchMakingKeyValuePair_t **filters, uint32_t n, uint32_t appid )
 {
@@ -370,6 +472,13 @@ static std::string build_filter( MatchMakingKeyValuePair_t **filters, uint32_t n
     }
     if (!have_appid) f = "\\appid\\" + std::to_string( appid ) + f;
     return f;
+}
+
+static int append_item( request *rq, const gameserveritem_t_165 &it )
+{
+    std::lock_guard<std::mutex> g( rq->lock );
+    rq->items.push_back( it );
+    return (int)rq->items.size() - 1;
 }
 
 static void run_lan_scan( request *rq )
@@ -401,13 +510,7 @@ static void run_lan_scan( request *rq )
         endpoint ep = { ntohl( from.sin_addr.s_addr ), ntohs( from.sin_port ), ntohs( from.sin_port ) };
         gameserveritem_t_165 it;
         if (!a2s_info( ep, &it, 1000 )) continue;
-        int idx;
-        {
-            std::lock_guard<std::mutex> g( rq->lock );
-            rq->items.push_back( it );
-            idx = (int)rq->items.size() - 1;
-        }
-        if (rq->response) rq->response->ServerResponded( rq, idx );
+        push_list_item( rq, append_item( rq, it ), true );
     }
     close( fd );
 }
@@ -417,6 +520,7 @@ static void run_request( request *rq )
     const int concurrency = 48; /* GetServerList hands back up to 5000 endpoints; ~1 s timeout each */
     list_result res;
     bool ok = true;
+    long long t0 = now_ms();
 
     if (rq->kind == kListLAN)
     {
@@ -425,30 +529,26 @@ static void run_request( request *rq )
     else if (rq->kind == kListInternet)
     {
         ok = fetch_list_from_host( rq->appid, rq->filter, res );
-        if (!ok) WARN( "server list for app %u failed: %s\n", rq->appid, res.error.c_str() );
-        TRACE( "app %u filter %s -> %zu complete items + %zu to ping\n", rq->appid, debugstr_a( rq->filter.c_str() ),
-               res.details.size(), res.targets.size() );
+        if (!ok) push_log( "list for app " + std::to_string( rq->appid ) + " failed: " + res.error );
+        push_log( "app " + std::to_string( rq->appid ) + " filter " + rq->filter + " -> " + std::to_string( res.details.size() )
+                  + " complete items + " + std::to_string( res.targets.size() ) + " endpoints to ping ("
+                  + std::to_string( now_ms() - t0 ) + " ms)" );
 
         for (auto &it : res.details)
         {
             if (rq->cancel) break;
-            int idx;
-            {
-                std::lock_guard<std::mutex> g( rq->lock );
-                rq->items.push_back( it );
-                idx = (int)rq->items.size() - 1;
-            }
-            if (rq->response) rq->response->ServerResponded( rq, idx );
+            push_list_item( rq, append_item( rq, it ), true );
         }
 
-        /* Ping the bare endpoints with a small pool of threads. Each success appends an item and
-         * tells the game; failures are reported with a placeholder item so the game can show them
-         * as non-responding (that is what the real client does). */
+        /* Ping the bare endpoints with a pool of threads. Each success appends an item and tells
+         * the game; a non-answer gets a placeholder item reported as failed (what the real client
+         * does, so the game can show it greyed or drop it). */
         std::atomic<size_t> next{ 0 };
+        std::atomic<int> answered{ 0 };
         std::vector<std::thread> pool;
         for (int t = 0; t < concurrency && t < (int)res.targets.size(); t++)
         {
-            pool.emplace_back( [rq, &res, &next]() {
+            pool.emplace_back( [rq, &res, &next, &answered]() {
                 for (;;)
                 {
                     if (rq->cancel) return;
@@ -456,39 +556,31 @@ static void run_request( request *rq )
                     if (i >= res.targets.size()) return;
                     gameserveritem_t_165 it;
                     bool got = a2s_info( res.targets[i], &it, 1000 );
-                    int idx;
+                    if (!got)
                     {
-                        std::lock_guard<std::mutex> g( rq->lock );
-                        if (!got)
-                        {
-                            memset( &it, 0, sizeof(it) );
-                            it.m_NetAdr.m_unIP = res.targets[i].ip;
-                            it.m_NetAdr.m_usConnectionPort = res.targets[i].port;
-                            it.m_NetAdr.m_usQueryPort = res.targets[i].qport ? res.targets[i].qport : res.targets[i].port;
-                            it.m_nPing = -1;
-                            it.m_nAppID = rq->appid;
-                        }
-                        rq->items.push_back( it );
-                        idx = (int)rq->items.size() - 1;
+                        memset( &it, 0, sizeof(it) );
+                        it.m_NetAdr.m_unIP = res.targets[i].ip;
+                        it.m_NetAdr.m_usConnectionPort = res.targets[i].port;
+                        it.m_NetAdr.m_usQueryPort = res.targets[i].qport ? res.targets[i].qport : res.targets[i].port;
+                        it.m_nPing = -1;
+                        it.m_nAppID = rq->appid;
                     }
-                    if (rq->cancel || !rq->response) continue;
-                    if (got) rq->response->ServerResponded( rq, idx );
-                    else rq->response->ServerFailedToRespond( rq, idx );
+                    else answered++;
+                    if (rq->cancel) return;
+                    push_list_item( rq, append_item( rq, it ), got );
                 }
             } );
         }
         for (auto &th : pool) th.join();
+        push_log( "app " + std::to_string( rq->appid ) + ": " + std::to_string( answered.load() ) + "/"
+                  + std::to_string( res.targets.size() ) + " endpoints answered A2S_INFO (" + std::to_string( now_ms() - t0 ) + " ms)" );
     }
     /* friends / favorites / history / spectator: nothing to list on this path */
 
     rq->refreshing = false;
-    if (rq->response && !rq->cancel)
-    {
-        size_t n;
-        { std::lock_guard<std::mutex> g( rq->lock ); n = rq->items.size(); }
-        rq->response->RefreshComplete( rq, (!ok || n == 0) ? eNoServersListedOnMasterServer : eServerResponded );
-    }
-    TRACE( "request %p done, %zu items\n", rq, rq->items.size() );
+    size_t n;
+    { std::lock_guard<std::mutex> g( rq->lock ); n = rq->items.size(); }
+    if (!rq->cancel) push_list_complete( rq, (!ok || n == 0) ? eNoServersListedOnMasterServer : eServerResponded );
 }
 
 static request *start_request( uint32_t appid, int kind, MatchMakingKeyValuePair_t **filters, uint32_t n,
@@ -505,137 +597,139 @@ static request *start_request( uint32_t appid, int kind, MatchMakingKeyValuePair
     return rq;
 }
 
-/* ── single-server queries (ping / players / rules) ─────────────────────────────────────── */
+/* ── the interface the game sees (all of these run on the game thread) ─────────────────── */
 
-static std::atomic<int> g_query_id{ 1 };
-static std::mutex g_query_lock;
-static std::vector<int> g_cancelled;
+static std::mutex g_live_lock;
+static std::vector<request *> g_live; /* requests not yet released: the pump drops results for others */
 
-static bool query_cancelled( int id )
+static bool is_live( request *rq )
 {
-    std::lock_guard<std::mutex> g( g_query_lock );
-    for (int c : g_cancelled) if (c == id) return true;
+    std::lock_guard<std::mutex> g( g_live_lock );
+    for (request *r : g_live) if (r == rq) return true;
     return false;
 }
-
-static int spawn_query( std::thread &&t )
-{
-    t.detach();
-    return g_query_id.fetch_add( 1 );
-}
-
-/* ── the interface the game sees ───────────────────────────────────────────────────────── */
 
 struct browser_core
 {
     void *request_list( int kind, uint32_t app, MatchMakingKeyValuePair_t **f, uint32_t n,
                         u_ISteamMatchmakingServerListResponse_106 *resp )
     {
-        return start_request( app, kind, f, n, resp );
+        request *rq = start_request( app, kind, f, n, resp );
+        { std::lock_guard<std::mutex> g( g_live_lock ); g_live.push_back( rq ); }
+        return rq;
     }
     void release( void *h )
     {
         request *rq = (request *)h;
-        if (!rq) return;
+        if (!rq || !is_live( rq )) return;
+        {
+            std::lock_guard<std::mutex> g( g_live_lock );
+            for (size_t i = 0; i < g_live.size(); i++) if (g_live[i] == rq) { g_live.erase( g_live.begin() + i ); break; }
+        }
         rq->cancel = true;
         rq->response = nullptr;
-        delete rq; /* joins the worker */
+        TRACE( "release %p\n", rq );
+        delete rq; /* joins the worker; queued results for it are dropped by the pump */
     }
     gameserveritem_t_165 *details( void *h, int32_t i )
     {
         request *rq = (request *)h;
-        if (!rq) return nullptr;
+        if (!rq || !is_live( rq )) return nullptr;
         std::lock_guard<std::mutex> g( rq->lock );
         if (i < 0 || (size_t)i >= rq->items.size()) return nullptr;
         return &rq->items[i];
     }
-    void cancel( void *h ) { request *rq = (request *)h; if (rq) rq->cancel = true; }
+    void cancel( void *h ) { request *rq = (request *)h; if (rq && is_live( rq )) rq->cancel = true; }
     void refresh( void *h )
     {
         request *rq = (request *)h;
-        if (!rq || rq->refreshing) return;
+        if (!rq || !is_live( rq ) || rq->refreshing) return;
         if (rq->worker.joinable()) rq->worker.join();
         rq->cancel = false;
         { std::lock_guard<std::mutex> g( rq->lock ); rq->items.clear(); }
         rq->refreshing = true;
         rq->worker = std::thread( run_request, rq );
     }
-    int8_t is_refreshing( void *h ) { request *rq = (request *)h; return rq && rq->refreshing ? 1 : 0; }
+    int8_t is_refreshing( void *h ) { request *rq = (request *)h; return rq && is_live( rq ) && rq->refreshing ? 1 : 0; }
     int32_t count( void *h )
     {
         request *rq = (request *)h;
-        if (!rq) return 0;
+        if (!rq || !is_live( rq )) return 0;
         std::lock_guard<std::mutex> g( rq->lock );
         return (int32_t)rq->items.size();
     }
     void refresh_server( void *h, int32_t i )
     {
         request *rq = (request *)h;
-        if (!rq) return;
         gameserveritem_t_165 *it = details( h, i );
         if (!it) return;
         endpoint ep = { it->m_NetAdr.m_unIP, it->m_NetAdr.m_usConnectionPort, it->m_NetAdr.m_usQueryPort };
         std::thread( [rq, ep, i]() {
             gameserveritem_t_165 fresh;
-            bool got = a2s_info( ep, &fresh, 1500 );
+            bool got = a2s_info( ep, &fresh, 1000 );
             if (got) { std::lock_guard<std::mutex> g( rq->lock ); if ((size_t)i < rq->items.size()) rq->items[i] = fresh; }
-            if (rq->response && !rq->cancel)
-            {
-                if (got) rq->response->ServerResponded( rq, i );
-                else rq->response->ServerFailedToRespond( rq, i );
-            }
+            push_list_item( rq, i, got );
         } ).detach();
     }
     int32_t ping( uint32_t ip, uint16_t port, u_ISteamMatchmakingPingResponse *resp )
     {
-        int id = g_query_id.load();
-        return spawn_query( std::thread( [ip, port, resp, id]() {
-            gameserveritem_t_165 it;
+        int id = g_query_id.fetch_add( 1 );
+        std::thread( [ip, port, resp, id]() {
+            auto p = std::unique_ptr<pending>( new pending() );
+            p->kind = PEND_PING; p->ping_resp = resp; p->query_id = id;
             endpoint ep = { ip, port, port };
-            bool got = a2s_info( ep, &it, 1500 );
-            if (query_cancelled( id ) || !resp) return;
-            if (got) resp->ServerResponded( &it );
-            else resp->ServerFailedToRespond();
-        } ) );
+            p->ok = a2s_info( ep, &p->item, 1000 );
+            push_pending( std::move( p ) );
+        } ).detach();
+        return id;
     }
     int32_t players( uint32_t ip, uint16_t port, u_ISteamMatchmakingPlayersResponse *resp )
     {
-        int id = g_query_id.load();
-        return spawn_query( std::thread( [ip, port, resp, id]() {
+        int id = g_query_id.fetch_add( 1 );
+        std::thread( [ip, port, resp, id]() {
+            auto p = std::unique_ptr<pending>( new pending() );
+            p->kind = PEND_PLAYERS; p->players_resp = resp; p->query_id = id;
             std::vector<uint8_t> query = { 'U', 0xff, 0xff, 0xff, 0xff }, reply;
-            bool ok = a2s_query( ip, port, query, 'D', reply, 1500, nullptr );
-            if (query_cancelled( id ) || !resp) return;
-            if (!ok) { resp->PlayersFailedToRespond(); return; }
-            reader r( reply );
-            uint8_t n = r.u8();
-            for (uint8_t i = 0; i < n && r.left( 1 ); i++)
+            p->ok = a2s_query( ip, port, query, 'D', reply, 1000, nullptr );
+            if (p->ok)
             {
-                r.u8();
-                std::string name = r.str();
-                int32_t score = (int32_t)r.u32();
-                float t = r.f32();
-                resp->AddPlayerToList( name.c_str(), score, t );
+                reader r( reply );
+                uint8_t n = r.u8();
+                for (uint8_t i = 0; i < n && r.left( 1 ); i++)
+                {
+                    r.u8();
+                    player_row row;
+                    row.name = r.str();
+                    row.score = (int32_t)r.u32();
+                    row.time = r.f32();
+                    p->players.push_back( row );
+                }
             }
-            resp->PlayersRefreshComplete();
-        } ) );
+            push_pending( std::move( p ) );
+        } ).detach();
+        return id;
     }
     int32_t rules( uint32_t ip, uint16_t port, u_ISteamMatchmakingRulesResponse *resp )
     {
-        int id = g_query_id.load();
-        return spawn_query( std::thread( [ip, port, resp, id]() {
+        int id = g_query_id.fetch_add( 1 );
+        std::thread( [ip, port, resp, id]() {
+            auto p = std::unique_ptr<pending>( new pending() );
+            p->kind = PEND_RULES; p->rules_resp = resp; p->query_id = id;
             std::vector<uint8_t> query = { 'V', 0xff, 0xff, 0xff, 0xff }, reply;
-            bool ok = a2s_query( ip, port, query, 'E', reply, 1500, nullptr );
-            if (query_cancelled( id ) || !resp) return;
-            if (!ok) { resp->RulesFailedToRespond(); return; }
-            reader r( reply );
-            uint16_t n = r.u16();
-            for (uint16_t i = 0; i < n && r.left( 1 ); i++)
+            p->ok = a2s_query( ip, port, query, 'E', reply, 1000, nullptr );
+            if (p->ok)
             {
-                std::string k = r.str(), v = r.str();
-                resp->RulesResponded( k.c_str(), v.c_str() );
+                reader r( reply );
+                uint16_t n = r.u16();
+                for (uint16_t i = 0; i < n && r.left( 1 ); i++)
+                {
+                    std::string k = r.str(), v = r.str();
+                    p->rules.emplace_back( k, v );
+                }
             }
-            resp->RulesRefreshComplete();
-        } ) );
+            push_pending( std::move( p ) );
+        } ).detach();
+        return id;
     }
     void cancel_query( int32_t id )
     {
@@ -696,22 +790,93 @@ struct browser_003 : u_ISteamMatchmakingServers_SteamMatchMakingServers003
 
 static browser_002 g_browser_002;
 static browser_003 g_browser_003;
+static std::atomic<bool> g_enabled{ false };
 
 } /* namespace */
 
-/* Called by every ISteamClient_*_GetISteamMatchmakingServers dispatcher with Valve's pointer.
- * Returns ours when the app opted in and the version is one we implement. */
+/* Called by every ISteamClient_*_GetISteamMatchmakingServers / GetISteamGenericInterface dispatcher
+ * and by steamclient_CreateInterface with Valve's pointer. Returns ours when the app opted in and
+ * the version is one we implement. */
 extern "C" void *bl_server_browser_override( const char *version, void *valve_iface )
 {
     static int enabled = -1;
     if (enabled < 0)
     {
         enabled = env_on( "BL_SERVER_BROWSER" ) ? 1 : 0;
+        g_enabled = enabled == 1;
         if (enabled) TRACE( "Bannerlator server browser enabled (BL_SB_PORT=%d)\n", env_int( "BL_SB_PORT", 0 ) );
     }
     if (!enabled || !version) return valve_iface;
-    if (!strcmp( version, "SteamMatchMakingServers002" )) return &g_browser_002;
-    if (!strcmp( version, "SteamMatchMakingServers003" )) return &g_browser_003;
+    if (strncmp( version, "SteamMatchMakingServers", 23 )) return valve_iface;
+    if (!strcmp( version, "SteamMatchMakingServers002" )) { TRACE( "serving %s\n", version ); return &g_browser_002; }
+    if (!strcmp( version, "SteamMatchMakingServers003" )) { TRACE( "serving %s\n", version ); return &g_browser_003; }
     WARN( "server browser version %s not implemented, using Valve's\n", debugstr_a( version ) );
     return valve_iface;
+}
+
+/* Game-thread pump: delivers queued results through the response wrappers (which TRACE and
+ * must therefore run on a Wine thread). Called from the Steam_BGetCallback dispatcher, i.e.
+ * every SteamAPI_RunCallbacks. */
+extern "C" void bl_server_browser_pump( void )
+{
+    if (!g_enabled) return;
+    for (int budget = 0; budget < 512; budget++)
+    {
+        std::unique_ptr<pending> p;
+        {
+            std::lock_guard<std::mutex> g( g_pending_lock );
+            if (g_pending.empty()) return;
+            p = std::move( g_pending.front() );
+            g_pending.pop_front();
+        }
+        switch (p->kind)
+        {
+        case PEND_LOG:
+            TRACE( "%s\n", p->text.c_str() );
+            break;
+        case PEND_LIST_ITEM:
+            if (p->rq && is_live( p->rq ) && p->rq->response && !p->rq->cancel)
+            {
+                if (p->ok) p->rq->response->ServerResponded( p->rq, p->idx );
+                else p->rq->response->ServerFailedToRespond( p->rq, p->idx );
+            }
+            break;
+        case PEND_LIST_COMPLETE:
+            if (p->rq && is_live( p->rq ) && p->rq->response && !p->rq->cancel)
+            {
+                TRACE( "request %p complete, result %u, %d items\n", p->rq, p->result, g_core.count( p->rq ) );
+                p->rq->response->RefreshComplete( p->rq, p->result );
+            }
+            break;
+        case PEND_PING:
+            if (p->ping_resp && !query_cancelled( p->query_id ))
+            {
+                if (p->ok) p->ping_resp->ServerResponded( &p->item );
+                else p->ping_resp->ServerFailedToRespond();
+            }
+            break;
+        case PEND_PLAYERS:
+            if (p->players_resp && !query_cancelled( p->query_id ))
+            {
+                if (!p->ok) p->players_resp->PlayersFailedToRespond();
+                else
+                {
+                    for (auto &row : p->players) p->players_resp->AddPlayerToList( row.name.c_str(), row.score, row.time );
+                    p->players_resp->PlayersRefreshComplete();
+                }
+            }
+            break;
+        case PEND_RULES:
+            if (p->rules_resp && !query_cancelled( p->query_id ))
+            {
+                if (!p->ok) p->rules_resp->RulesFailedToRespond();
+                else
+                {
+                    for (auto &kv : p->rules) p->rules_resp->RulesResponded( kv.first.c_str(), kv.second.c_str() );
+                    p->rules_resp->RulesRefreshComplete();
+                }
+            }
+            break;
+        }
+    }
 }
