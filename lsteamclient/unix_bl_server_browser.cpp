@@ -524,7 +524,10 @@ static void run_lan_scan( request *rq )
 
 static void run_request( request *rq )
 {
-    const int concurrency = 48; /* GetServerList hands back up to 5000 endpoints; ~1 s timeout each */
+    /* Pace like Valve's client: the game does real work per answered server (row insert, sort,
+     * map-file checks), so results must arrive at a rate it digests between frames. 16 pingers
+     * ≈ 150 answers/s; the pump then hands the game a few per frame. */
+    const int concurrency = env_int( "BL_SB_PINGERS", 16 );
     list_result res;
     bool ok = true;
     long long t0 = now_ms();
@@ -845,10 +848,12 @@ extern "C" void bl_server_browser_pump( void )
     /* RunCallbacks loops on Steam_BGetCallback until it comes back empty; feeding it continuously
      * would keep the game inside that loop for the whole refresh. Deliver one batch per ~frame. */
     static long long last_batch = 0;
+    static int per_batch = -1;
+    if (per_batch < 0) per_batch = env_int( "BL_SB_BATCH", 6 );
     long long now = now_ms();
     if (now - last_batch < 16) return;
     last_batch = now;
-    for (int budget = 0; budget < 48; budget++)
+    for (int budget = 0; budget < per_batch; budget++)
     {
         std::unique_ptr<pending> p;
         {
