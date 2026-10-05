@@ -550,12 +550,21 @@ static void preloader_exec( char **argv, WORD machine )
 #ifdef HAVE_WINE_PRELOADER
 #if !defined(__arm__) && !defined(__aarch64__)
     const char *p;
+    char *wine64 = NULL;
 
     if (machine == IMAGE_FILE_MACHINE_AMD64
-        && ((p = remove_tail( argv[1], "x86_64-unix/wine" )) || (p = remove_tail( argv[1], "i386-unix/wine64" ))))
+        && ((p = remove_tail( argv[1], "x86_64-unix/wine" )) || (p = remove_tail( argv[1], "i386-unix/wine64" )))
+        && asprintf( &wine64, "%si386-unix/wine64", p ) != -1 && !access( wine64, X_OK ))
     {
         asprintf( &argv[0], "%si386-unix/wine64-preloader", p );
-        asprintf( &argv[1], "%si386-unix/wine64", p );
+        argv[1] = wine64;
+    }
+    /* Android layers ship the 64-bit loader as x86_64-unix/wine{,64-preloader} with no
+     * i386-unix tree: keep the pre-loader64 layout, or every child process fails to exec. */
+    else if (machine == IMAGE_FILE_MACHINE_AMD64)
+    {
+        free( wine64 );
+        asprintf( &argv[0], "%s64-preloader", argv[1] );
     }
     else
 #endif
