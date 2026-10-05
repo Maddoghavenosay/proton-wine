@@ -1,11 +1,11 @@
-name: Proton-CachyOS 11.0-20260703 (bionic layer, experimental)
-run-name: "Proton-CachyOS 11.0-20260703 — ${{ github.ref_name }} (${{ github.event_name }})"
+name: Proton-CachyOS 11.0-20261005 (bionic layer, experimental)
+run-name: "Proton-CachyOS 11.0-20261005 — ${{ github.ref_name }} (${{ github.event_name }})"
 
-# EXPERIMENTAL layer: the Wine of Proton-CachyOS release cachyos-11.0-20260703-slr,
-# CachyOS/wine-cachyos b5f2dc7b5906ef864f83df8fef94c9f539eaad2d (Valve Proton
-# experimental-11.0 of late May + CachyOS patches), with the full v7 Android stack of
-# proton_11.0-2 ported onto it. Stamped versionName 11.0-20260703 / versionCode 1 so it
-# installs in its own slot. Artifacts only: the release job is disabled.
+# EXPERIMENTAL layer: the Wine of Proton-CachyOS release cachyos-11.0-20261005-slr,
+# CachyOS/wine-cachyos 2ce6b44caa66a56ec99c7826ae564c088abc1b9f (base Valve Proton
+# experimental-11.0-20261001; CachyOS's wine is now rebased on Proton-EM), with the full
+# proton_11.0-cachyos (v13) stack ported onto it. A separate layer from the 20260703 one:
+# versionName 11.0-20261005 gives it its own slot. Artifacts only: the release job is disabled.
 
 # Legs: aarch64/28 (arm64ec, 16 KB aligned: the flag is forced for aarch64) and
 # x86_64/28 (box64 layer, 4 KB pages, no sysvshm/XShm) -- the same two legs and
@@ -18,7 +18,7 @@ on:
   push:
     # Self-builds on push to its own branch only: GitHub registers workflow_dispatch
     # only for workflows on the default branch, so a bare dispatch 404s here.
-    branches: [ 'proton_11.0-cachyos', 'staging/proton_11.0-cachyos/**' ]
+    branches: [ 'proton_11.0-cachyos-20261005', 'staging/proton_11.0-cachyos-20261005/**' ]
   workflow_dispatch:
 
 jobs:
@@ -273,23 +273,23 @@ jobs:
 
       - name: Generate profile.json files
         run: |
-          BASE="CachyOS/wine-cachyos b5f2dc7b590 (release cachyos-11.0-20260703-slr: Valve Proton experimental-11.0 + CachyOS patches)"
+          BASE="CachyOS/wine-cachyos 2ce6b44caa6 (release cachyos-11.0-20261005-slr: Valve Proton experimental-11.0-20261001, CachyOS wine rebased on Proton-EM)"
           ANDROID_FIXES="Android fixes (noexec/force_anon SD-card boot, drive-root copy guard, C.UTF-8 locale)"
           if [ "${{ matrix.arch }}" == "x86_64" ]; then
             ARCH_NAME="x86_64"
-            DESC="Proton-CachyOS 11.0-20260703 ${ARCH_NAME} (bionic, box64) EXPERIMENTAL — ${BASE} + our full v7 Android stack: fast-yield gate + esync + xrandr/xrender + XP desktop + xinput controller-dies fix + EA network fixes + realized-font-handle cap 32768 + DirectAudio v1.3.2 (ported to the CachyOS mmdevapi) + ${ANDROID_FIXES}. Runs x86_64 Wine through box64; Bannerlator/WinNative/Winlator-bionic; needs a fresh x86_64 container. v10: cutscene duration/timestamp fixes + shared-texture driver for DXVK before 3.0."
-            DESC_WINE="Proton-CachyOS 11.0-20260703 ${ARCH_NAME} (bionic, box64) EXPERIMENTAL — wine-cachyos b5f2dc7b590 + our full v7 Android stack. Runs x86_64 Wine through box64; Bannerlator/WinNative/Winlator-bionic; needs a fresh x86_64 container."
+            DESC="Proton-CachyOS 11.0-20261005 ${ARCH_NAME} (bionic, box64) EXPERIMENTAL — ${BASE} + our full Android stack (as the 20260703 v13 layer): fast-yield gate + esync + opt-in userspace ntsync + xrandr/xrender + XP desktop + xinput controller-dies fix + EA network fixes + realized-font-handle cap 32768 + DirectAudio v1.3.2 (ported to the CachyOS mmdevapi) + ${ANDROID_FIXES}. Cutscene duration/timestamp fixes + shared-texture driver for DXVK before 3.0 + media registrations in the prefix pack. Runs x86_64 Wine through box64; Bannerlator/WinNative/Winlator-bionic; needs a fresh x86_64 container."
+            DESC_WINE="Proton-CachyOS 11.0-20261005 ${ARCH_NAME} (bionic, box64) EXPERIMENTAL — wine-cachyos 2ce6b44caa6 + our full Android stack (as the 20260703 v13 layer). Runs x86_64 Wine through box64; Bannerlator/WinNative/Winlator-bionic; needs a fresh x86_64 container."
           else
             ARCH_NAME="arm64ec"
-            DESC="Proton-CachyOS 11.0-20260703 ${ARCH_NAME} (bionic) EXPERIMENTAL — ${BASE} + our full v7 Android stack: fast-yield gate + FEX-unixlib loader + esync + xrandr/xrender + XP desktop + xinput controller-dies fix + RtlIsEcCode guard + EA network fixes + realized-font-handle cap 32768 + DirectAudio v1.3.2 (ported to the CachyOS mmdevapi) + ${ANDROID_FIXES}. Wayland + HDR10 added. v10: cutscene duration/timestamp fixes + shared-texture driver for DXVK before 3.0."
-            DESC_WINE="Proton-CachyOS 11.0-20260703 ${ARCH_NAME} (bionic) EXPERIMENTAL — wine-cachyos b5f2dc7b590 + our full v7 Android stack. Wayland + HDR10 added."
+            DESC="Proton-CachyOS 11.0-20261005 ${ARCH_NAME} (bionic) EXPERIMENTAL — ${BASE} + our full Android stack (as the 20260703 v13 layer): fast-yield gate + FEX-unixlib loader + esync + opt-in userspace ntsync + xrandr/xrender + XP desktop + xinput controller-dies fix + RtlIsEcCode guard + EA network fixes + realized-font-handle cap 32768 + DirectAudio v1.3.2 (ported to the CachyOS mmdevapi) + ${ANDROID_FIXES}. Wayland + HDR10 (this winewayland needs xdg_wm_base v3). Cutscene duration/timestamp fixes + shared-texture driver for DXVK before 3.0 + winedmo with FFmpeg (opt-in) + lsteamclient for Headless Steam (opt-in)."
+            DESC_WINE="Proton-CachyOS 11.0-20261005 ${ARCH_NAME} (bionic) EXPERIMENTAL — wine-cachyos 2ce6b44caa6 + our full Android stack (as the 20260703 v13 layer). Wayland + HDR10 (needs xdg_wm_base v3)."
           fi
 
           # Generate Proton profile.json
           cat > $GITHUB_WORKSPACE/profile.json << EOF
           {
             "type": "Proton",
-            "versionName": "11.0-20260703-${ARCH_NAME}",
+            "versionName": "11.0-20261005-${ARCH_NAME}",
             "versionCode": 13,
             "description": "${DESC}",
             "files": [],
@@ -305,7 +305,7 @@ jobs:
           cat > $GITHUB_WORKSPACE/profile-wine.json << EOF
           {
             "type": "Wine",
-            "versionName": "11.0-20260703-${ARCH_NAME}",
+            "versionName": "11.0-20261005-${ARCH_NAME}",
             "versionCode": 13,
             "description": "${DESC_WINE}",
             "files": [],
@@ -351,13 +351,13 @@ jobs:
             printf 'wine11 1.3.2' > lib/wine/aarch64-unix/.directaudio_bundled
           fi
 
-          tar -I 'zstd -T0 -19' -cf proton-cachyos-11.0-20260703-$ARCH_NAME.wcp bin lib share prefixPack.txz profile.json
-          mv proton-cachyos-11.0-20260703-$ARCH_NAME.wcp $GITHUB_WORKSPACE/
+          tar -I 'zstd -T0 -19' -cf proton-cachyos-11.0-20261005-$ARCH_NAME.wcp bin lib share prefixPack.txz profile.json
+          mv proton-cachyos-11.0-20261005-$ARCH_NAME.wcp $GITHUB_WORKSPACE/
 
           # Create Wine WCP for CMOD & Ludashi - wcp.xz format
           cp $GITHUB_WORKSPACE/profile-wine.json profile.json
-          tar cJf proton-wine-cachyos-11.0-20260703-$ARCH_NAME.wcp.xz bin lib share prefixPack.txz profile.json
-          mv proton-wine-cachyos-11.0-20260703-$ARCH_NAME.wcp.xz $GITHUB_WORKSPACE/
+          tar cJf proton-wine-cachyos-11.0-20261005-$ARCH_NAME.wcp.xz bin lib share prefixPack.txz profile.json
+          mv proton-wine-cachyos-11.0-20261005-$ARCH_NAME.wcp.xz $GITHUB_WORKSPACE/
 
       # The packaged archive must carry exactly what the app's ContentsManager expects.
       - name: Verify wcp archives
@@ -447,7 +447,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: proton-${{ env.ARCH_NAME }}-sdk${{ matrix.api_level }}
-          path: proton-cachyos-11.0-20260703-${{ env.ARCH_NAME }}.wcp
+          path: proton-cachyos-11.0-20261005-${{ env.ARCH_NAME }}.wcp
           retention-days: 30
 
       - name: Upload Wayland driver for ${{ matrix.arch }}
@@ -463,7 +463,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: proton-wine-${{ env.ARCH_NAME }}-sdk${{ matrix.api_level }}
-          path: proton-wine-cachyos-11.0-20260703-${{ env.ARCH_NAME }}.wcp.xz
+          path: proton-wine-cachyos-11.0-20261005-${{ env.ARCH_NAME }}.wcp.xz
           retention-days: 30
 
   release:
@@ -489,7 +489,7 @@ jobs:
         id: generate_tag
         run: |
           DATE=$(date +%Y%m%d)
-          TAG_NAME="build-p11-${DATE}-cachyos-11.0-20260703"
+          TAG_NAME="build-p11-${DATE}-cachyos-11.0-20261005"
           echo "tag_name=${TAG_NAME}" >> $GITHUB_OUTPUT
           echo "Generated tag: ${TAG_NAME}"
 
@@ -497,16 +497,16 @@ jobs:
         uses: softprops/action-gh-release@v1
         with:
           tag_name: ${{ steps.generate_tag.outputs.tag_name }}
-          name: Proton-CachyOS Wine 11.0-20260703 (${{ steps.generate_tag.outputs.tag_name }})
+          name: Proton-CachyOS Wine 11.0-20261005 (${{ steps.generate_tag.outputs.tag_name }})
           files: release/*
           draft: false
           prerelease: true
           body: |
             # Caution: This version is provided for testing purposes only. It may lead to game instability or crashes. Use at your own risk.
 
-            ## Proton-CachyOS Wine build based on [CachyOS/wine-cachyos b5f2dc7b590](https://github.com/CachyOS/wine-cachyos/commit/b5f2dc7b5906ef864f83df8fef94c9f539eaad2d) (release cachyos-11.0-20260703-slr) + our v7 Android stack
+            ## Proton-CachyOS Wine build based on [CachyOS/wine-cachyos 2ce6b44caa6](https://github.com/CachyOS/wine-cachyos/commit/2ce6b44caa66a56ec99c7826ae564c088abc1b9f) (release cachyos-11.0-20261005-slr) + our Android layer stack
 
-            ### Proton Version: 11.0-20260703 (experimental)
+            ### Proton Version: 11.0-20261005 (experimental)
 
             Built from commit: ${{ github.sha }}
 
@@ -516,11 +516,11 @@ jobs:
 
             ### WCP Files
             **Proton Type:**
-            - `proton-cachyos-11.0-20260703-arm64ec.wcp` - For GameNative
-            - `proton-cachyos-11.0-20260703-x86_64.wcp` - For GameNative
+            - `proton-cachyos-11.0-20261005-arm64ec.wcp` - For GameNative
+            - `proton-cachyos-11.0-20261005-x86_64.wcp` - For GameNative
 
             **Wine Type:**
-            - `proton-wine-cachyos-11.0-20260703-arm64ec.wcp.xz` - For Winlator for CMOD & Ludashi
-            - `proton-wine-cachyos-11.0-20260703-x86_64.wcp.xz` - For Winlator for CMOD & Ludashi
+            - `proton-wine-cachyos-11.0-20261005-arm64ec.wcp.xz` - For Winlator for CMOD & Ludashi
+            - `proton-wine-cachyos-11.0-20261005-x86_64.wcp.xz` - For Winlator for CMOD & Ludashi
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
