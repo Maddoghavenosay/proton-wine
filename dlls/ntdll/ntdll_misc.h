@@ -54,6 +54,7 @@ extern UINT_PTR page_size;
 #endif
 
 extern BOOL delay_heap_free;
+extern ULONG ntdll_ssbs_bit;
 extern BOOL heap_zero_hack;
 extern BOOL heap_top_down_hack;
 
