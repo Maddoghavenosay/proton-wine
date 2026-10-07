@@ -4331,22 +4331,6 @@ static int compare_known_dlls( const void *name, const struct wine_rb_entry *ent
     return wcsicmp( name, known_dll->name );
 }
 
-/* PSTATE.SSBS bit forced into rebuilt arm64 contexts; WINE_FORCE_SSBS=0 restores stock behaviour. */
-ULONG ntdll_ssbs_bit = 0x1000;
-
-static void load_force_ssbs(void)
-{
-    UNICODE_STRING name = RTL_CONSTANT_STRING( L"WINE_FORCE_SSBS" );
-    UNICODE_STRING value;
-    WCHAR buffer[2];
-
-    value.Buffer = buffer;
-    value.Length = 0;
-    value.MaximumLength = sizeof(buffer);
-    if (!RtlQueryEnvironmentVariable_U( NULL, &name, &value ) && value.Length && buffer[0] == '0')
-        ntdll_ssbs_bit = 0;
-}
-
 /***********************************************************************
  *           load_global_options
  */
@@ -4666,7 +4650,6 @@ void loader_init( CONTEXT *context, void **entry )
             InitializeListHead( &hash_table[i] );
 
         init_user_process_params();
-        load_force_ssbs();
         load_global_options();
         version_init();
 
