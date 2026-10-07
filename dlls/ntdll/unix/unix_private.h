@@ -134,6 +134,7 @@ struct async_fileio
 };
 
 static const SIZE_T page_size = 0x1000;
+static const ULONG cpsr_user_mask = 0xf620fc30;
 static const SIZE_T teb_size = 0x3800;  /* TEB64 + TEB32 + debug info */
 static const SIZE_T signal_stack_mask = 0xffff;
 static const SIZE_T signal_stack_size = 0x10000 - 0x3800;
