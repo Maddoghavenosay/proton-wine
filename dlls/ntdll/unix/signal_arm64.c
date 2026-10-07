@@ -303,16 +303,6 @@ static void restore_fpu( const CONTEXT *context, ucontext_t *sigcontext )
 }
 
 
-/* PSTATE.SSBS (bit 12): Wine rebuilds PSTATE from CONTEXT, which leaves SSBS clear and runs the
- * thread with speculative store bypass disabled. Forced on unless WINE_FORCE_SSBS=0. */
-static ULONG ssbs_bit = 0x1000;
-
-static void init_force_ssbs(void)
-{
-    const char *env = getenv( "WINE_FORCE_SSBS" );
-    if (env && env[0] == '0') ssbs_bit = 0;
-}
-
 /***********************************************************************
  *           save_context
  *
@@ -327,7 +317,7 @@ static void save_context( CONTEXT *context, const ucontext_t *sigcontext )
     context->Lr   = LR_sig(sigcontext);     /* Link register */
     context->Sp   = SP_sig(sigcontext);     /* Stack pointer */
     context->Pc   = PC_sig(sigcontext);     /* Program Counter */
-    context->Cpsr = PSTATE_sig(sigcontext) | ssbs_bit; /* Current State Register */
+    context->Cpsr = PSTATE_sig(sigcontext); /* Current State Register */
     for (i = 0; i <= 28; i++) context->X[i] = REGn_sig( i, sigcontext );
     if (save_fpu( context->V, &context->Fpcr, &context->Fpsr, sigcontext ))
         context->ContextFlags |= CONTEXT_FLOATING_POINT;
@@ -361,7 +351,7 @@ static void restore_context( const CONTEXT *context, ucontext_t *sigcontext )
 
     FP_sig(sigcontext)     = context->Fp;   /* Frame pointer */
     LR_sig(sigcontext)     = context->Lr;   /* Link register */
-    PSTATE_sig(sigcontext) = context->Cpsr | ssbs_bit; /* Current State Register */
+    PSTATE_sig(sigcontext) = context->Cpsr; /* Current State Register */
     for (i = 0; i <= 28; i++) REGn_sig( i, sigcontext ) = context->X[i];
     restore_fpu( context, sigcontext );
 }
@@ -444,7 +434,7 @@ NTSTATUS WINAPI NtSetContextThread( HANDLE handle, const CONTEXT *context )
         frame->lr    = context->Lr;
         frame->sp    = context->Sp;
         frame->pc    = context->Pc;
-        frame->cpsr  = context->Cpsr | ssbs_bit;
+        frame->cpsr  = context->Cpsr;
         if (is_emulated_code( frame->pc )) flags |= RESTORE_FLAGS_EMULATION;
         else frame->restore_flags &= ~RESTORE_FLAGS_EMULATION;
     }
@@ -493,7 +483,7 @@ NTSTATUS WINAPI NtGetContextThread( HANDLE handle, CONTEXT *context )
         context->Lr   = frame->lr;
         context->Sp   = frame->sp;
         context->Pc   = frame->pc;
-        context->Cpsr = frame->cpsr | ssbs_bit;
+        context->Cpsr = frame->cpsr;
         context->ContextFlags |= CONTEXT_CONTROL;
     }
     if (needed_flags & CONTEXT_FLOATING_POINT)
@@ -622,7 +612,7 @@ NTSTATUS set_thread_wow64_context( HANDLE handle, const void *ctx, ULONG size )
             wow_frame->Sp = context->Sp;
             wow_frame->Lr = context->Lr;
             wow_frame->Pc = context->Pc & ~1;
-            wow_frame->Cpsr = context->Cpsr | ssbs_bit;
+            wow_frame->Cpsr = context->Cpsr;
             if (context->Cpsr & 0x20) wow_frame->Pc |= 1; /* thumb */
         }
         if (flags & CONTEXT_FLOATING_POINT)
@@ -748,7 +738,7 @@ NTSTATUS get_thread_wow64_context( HANDLE handle, void *ctx, ULONG size )
             context->Sp   = wow_frame->Sp;
             context->Lr   = wow_frame->Lr;
             context->Pc   = wow_frame->Pc;
-            context->Cpsr = wow_frame->Cpsr | ssbs_bit;
+            context->Cpsr = wow_frame->Cpsr;
             context->ContextFlags |= CONTEXT_CONTROL;
         }
         if (needed_flags & CONTEXT_FLOATING_POINT)
@@ -1375,7 +1365,7 @@ static void save_syscall_entry_frame( ucontext_t *sigcontext )
     frame->lr = REGn_sig( 9, sigcontext );
     frame->sp = SP_sig(sigcontext);
     frame->pc = LR_sig(sigcontext);
-    frame->cpsr = PSTATE_sig(sigcontext) | ssbs_bit;
+    frame->cpsr = PSTATE_sig(sigcontext);
     frame->restore_flags = 0;
     frame->syscall_id = REGn_sig( 8, sigcontext );
     save_fpu( frame->v, &frame->fpcr, &frame->fpsr, sigcontext );
@@ -1481,7 +1471,7 @@ static void usr2_handler( int signal, siginfo_t *siginfo, void *_sigcontext )
     }
     FP_sig(sigcontext)     = frame->fp;
     LR_sig(sigcontext)     = frame->lr;
-    PSTATE_sig(sigcontext) = frame->cpsr | ssbs_bit;
+    PSTATE_sig(sigcontext) = frame->cpsr;
     for (i = 0; i <= 28; i++) REGn_sig( i, sigcontext ) = frame->x[i];
 
 #ifdef linux
@@ -1558,7 +1548,6 @@ void signal_init_process(void)
 
     signal_alloc_thread( NtCurrentTeb() );
 
-    init_force_ssbs();
     sig_act.sa_mask = server_block_set;
     sig_act.sa_flags = SA_SIGINFO | SA_RESTART | SA_ONSTACK;
 
