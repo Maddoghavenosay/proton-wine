@@ -302,6 +302,12 @@ static void restore_fpu( const CONTEXT *context, ucontext_t *sigcontext )
 }
 
 
+/* Preserve all CPSR bits not covered by user context in signal handlers.
+ * Additionally, preserve the host SSBS bit, which is allowed to be set on
+ * Windows, but is volatile and restored on kernel transition anyway.
+ * (Wine MR 12262.) WINE_FORCE_SSBS=0 drops the SSBS part for stock behaviour. */
+static ULONG cpsr_host_mask = ~cpsr_user_mask | 0x1000;
+
 /***********************************************************************
  *           save_context
  *
@@ -316,7 +322,7 @@ static void save_context( CONTEXT *context, const ucontext_t *sigcontext )
     context->Lr   = LR_sig(sigcontext);     /* Link register */
     context->Sp   = SP_sig(sigcontext);     /* Stack pointer */
     context->Pc   = PC_sig(sigcontext);     /* Program Counter */
-    context->Cpsr = PSTATE_sig(sigcontext); /* Current State Register */
+    context->Cpsr = PSTATE_sig(sigcontext) & cpsr_user_mask; /* Current State Register */
     for (i = 0; i <= 28; i++) context->X[i] = REGn_sig( i, sigcontext );
     save_fpu( context, sigcontext );
 }
@@ -335,7 +341,7 @@ static void restore_context( const CONTEXT *context, ucontext_t *sigcontext )
     LR_sig(sigcontext)     = context->Lr;   /* Link register */
     SP_sig(sigcontext)     = context->Sp;   /* Stack pointer */
     PC_sig(sigcontext)     = context->Pc;   /* Program Counter */
-    PSTATE_sig(sigcontext) = context->Cpsr; /* Current State Register */
+    PSTATE_sig(sigcontext) = (PSTATE_sig(sigcontext) & cpsr_host_mask) | (context->Cpsr & cpsr_user_mask); /* Current State Register */
     for (i = 0; i <= 28; i++) REGn_sig( i, sigcontext ) = context->X[i];
     restore_fpu( context, sigcontext );
 }
@@ -425,7 +431,7 @@ NTSTATUS WINAPI NtSetContextThread( HANDLE handle, const CONTEXT *context )
         frame->lr    = context->Lr;
         frame->sp    = context->Sp;
         frame->pc    = context->Pc;
-        frame->cpsr  = context->Cpsr;
+        frame->cpsr  = context->Cpsr & cpsr_user_mask;
     }
     if (flags & CONTEXT_FLOATING_POINT)
     {
@@ -602,7 +608,7 @@ NTSTATUS set_thread_wow64_context( HANDLE handle, const void *ctx, ULONG size )
             wow_frame->Sp = context->Sp;
             wow_frame->Lr = context->Lr;
             wow_frame->Pc = context->Pc & ~1;
-            wow_frame->Cpsr = context->Cpsr;
+            wow_frame->Cpsr = context->Cpsr & cpsr_user_mask;
             if (context->Cpsr & 0x20) wow_frame->Pc |= 1; /* thumb */
         }
         if (flags & CONTEXT_FLOATING_POINT)
@@ -1389,7 +1395,7 @@ static void usr2_handler( int signal, siginfo_t *siginfo, void *sigcontext )
     LR_sig(context)     = frame->lr;
     SP_sig(context)     = frame->sp;
     PC_sig(context)     = frame->pc;
-    PSTATE_sig(context) = frame->cpsr;
+    PSTATE_sig(context) = (PSTATE_sig(context) & cpsr_host_mask) | frame->cpsr;
     for (i = 0; i <= 28; i++) REGn_sig( i, context ) = frame->x[i];
 
 #ifdef linux
@@ -1463,6 +1469,10 @@ void signal_init_process(void)
     void *kernel_stack = (char *)thread_data->kernel_stack + kernel_stack_size;
 
     thread_data->syscall_frame = (struct syscall_frame *)kernel_stack - 1;
+    {
+        const char *env = getenv( "WINE_FORCE_SSBS" );
+        if (env && env[0] == '0') cpsr_host_mask &= ~0x1000;
+    }
 
     signal_alloc_thread( NtCurrentTeb() );
 
