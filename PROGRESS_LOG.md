@@ -2,6 +2,34 @@
 
 Newest entry at the top.
 
+## 2026-10-23: v15 RELEASED — six layers (`build-bionic-layers-20261023-v15`, Latest + catalog default)
+
+- **Why:** on DroidDeck-Proton 11.0-9.1 the Bannerlator drawer showed FEX "N/A" and Xbox sign-in failed with
+  `REGDB_E_CLASSNOTREG` (PropertySet only under `Wow6432Node`). User decisions 10-23: six layers (Proton 10.0-4,
+  GE 10.0-34, 11.0-1, 11.0-2, GE 11.0-9, new DroidDeck-Proton 11.0-11.1 replacing 11.0-9.1); GE 11.0-3/5/6/7/7.1 and
+  both CachyOS dropped (stay v14); P10 PropertySet backport skipped; GameNative #85/#86/#82 parts 3-4 held.
+- **Built (staging/<parent>/v15, then parents fast-forwarded; v14 tips at `refs/backup/20261023/<parent>-before-v15`):**
+  - FEX unixlib name fix re-ported onto Valve's `load_unixlib_by_name` (extension set one byte early → `libarm64ecfe.so`):
+    GE 11.0-9 + DroidDeck 11.0-11.1; MARKERS source check.
+  - `android/prefixpack-winrt-registry.py` + workflow step: classes from the layer's own WINE_REGISTRY scripts added to
+    both prefix views (arm64ec +18/+18, 11.0-1 +17, x86_64 +30, Wine 10 +6; check uses PropertySet, Buffer on Wine 10).
+  - GameNative patch files with PR # + author in the build steps: #58 #69 #73 #94 #46 #82(OPWR) #66 #42 (+#84 on
+    11.0/11.0-2); Wine 10: #94 #46 #42 + re-ports of #58 #73.
+  - DroidDeck 11.0-11.1 (`proton_11.11.1-DroidDeck`, new): GE 11.0-9 v15 + merge Valve `c53678ab22a8` (GE-Proton11-10/11-11
+    base) + 17 CachyOS game fixes from 11.0-9.1 + CachyOS 20261015 setupapi/crypt32 + GE SRW lock (Sebastian Matkovich)
+    + RtlWaitOnAddress alert (Jason Eggleston). Not taken: MF 0093/0094, EM/OpenXR, ACE x7, PS lsteamclient fallback.
+    Every 11.0-9.1 change verified present (reverse-apply), patch lists a superset.
+  - versionCode 15 everywhere.
+- **CI (parents):** DD 40025401541 · 10.0 40025487521 · 10.34-GE 40025537577 · 11.0 40025585461 · 11.0-2 40025641710 ·
+  11.9-GE 40025697141 — all green, headSha = branch tips (12edf94e, de3c3b7d, 63e0ca0f, 7ca691b0, 4fdfbe70, 0af00e72).
+- **Release:** tag on 11.0-2 `4fdfbe70`, 9 wcp (remote sha256 == local); winlator-contents mirror
+  `bionic-layers-20261023-v15` + `contents.json` `a727c40` (9 rows → v15, DD 9.1 rows → 11.0-11.1). Notes in the v12
+  all-in-one layout (per-layer `<details>`, Credits).
+- **Device-proven (Pocket FIT):** DroidDeck 11.0-11.1 arm64ec only — drawer unixlib, BALL x PIT, in-place update from
+  11.0-9.1 (Bannerlator `301facfe`) kept saves, DiRT Showdown 143.7 fps (needs Bannerlator `ea07e522` EmulateModeset=N),
+  95/95 WinRT classes both views, no FATAL. **Not device-tested:** GE 11.0-9, 11.0-2, 11.0-1, both Proton 10, all x86_64.
+- **Open:** device tests above; Proton 10 still has no PropertySet; catalog `proton-10.0-arm64ec` entry left alone (user).
+
 ## 2026-09-30: v9 RELEASED — all ten layers (`build-bionic-layers-20260930-v9`, Latest + catalog default)
 
 - **Every Wine 11 layer** (11.0-1, 11.0-2, GE 11.0-3/-5/-6/-7/-7.1, CachyOS): winewayland **touch** (`wl_touch` →
