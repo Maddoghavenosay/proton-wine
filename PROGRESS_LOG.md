@@ -2,6 +2,12 @@
 
 Newest entry at the top.
 
+## 2026-10-24 — CJK locale fix merged into six layer branches (fix/cjk-locale/*, MERGED, NOT device-tested)
+- Why: GBK games got code page 1252 on our layers: bionic setlocale("") answers "C.UTF-8" and unix_to_win_locale() fell back to LC_ALL only for exactly "C".
+- Fix (dlls/ntdll/unix/env.c): "C.*" treated like "C", then LC_ALL / LANG. Fast-forwarded on the user's go: proton_10.0 9877181615, proton_10.34-GE 0939168e7d, proton_11.0 dcc517e34e, proton_11.0-2 7b4dd1dfdb, proton_11.9-GE 6463949d61, proton_11.11.1-DroidDeck 4f45e18387. Backups refs/backup/20261024/<branch>-before-cjk-locale.
+- CI: branch runs 40130106661…40130115307 all green (verify-layer PASS); push runs 40158648780…40158658587 started (release jobs if: false). No release; versionCode 15 kept.
+- Open: CJK game test on a rebuilt layer; the Bannerlator app fix (main defb2b9f) covers old layers too.
+
 ## 2026-10-23: v15 RELEASED — six layers (`build-bionic-layers-20261023-v15`, Latest + catalog default)
 
 - **Why:** on DroidDeck-Proton 11.0-9.1 the Bannerlator drawer showed FEX "N/A" and Xbox sign-in failed with
