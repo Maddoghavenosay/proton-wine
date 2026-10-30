@@ -2,6 +2,14 @@
 
 Newest entry at the top.
 
+## 2026-10-30 — DroidDeck-Proton 11.0-11.9 layer (`staging/proton_11.11.9-DroidDeck/v16`, CI-green, user testing on device)
+- **Why:** user: the 11-11.9 DroidDeck-Proton fixes in a Bannerlator layer, keeping every fix of the 11.0-11.1 layer.
+- **Built:** off `proton_11.11.1-DroidDeck` v16 (068807e2). `bcde54f5`: android/patches from DroidDeck-Proton f7d00335 (shared-storage owner #4, i386 lost wake #5, Wine files not read-only #6, shared storage case-insensitive #7, maxjivi05; WoW Forever ARM64EC ntdll #3, arusiasotto, arm64ec list only: its start_thread hunk calls an `__aarch64__`-only function) + winex11 offscreen-check cache (ff9db6f6 + bab12909, hand port, off unless WINE_OFFSCREEN_CHECK_MS); MARKERS + verify-layer. `f3ea51e5`: workflow `build-droiddeck-proton-11.0-11.9.yml`, versionName 11.0-11.9, versionCode 16 (user choice).
+- **CI:** push run 41090740654 (headSha f3ea51e5) aarch64 + x86_64 green, logs read: 65/63 patches, markers ok, GE ok, verify-layer PASS.
+- **Device:** wcp staged /sdcard/Download/DroidDeck-Proton-11.0-11.9-{arm64ec,x86_64}-v16-f3ea51e5.wcp (sha256 90d19b9e… / 57c5588c…); user installed arm64ec 13:25 EDT, all 2569 files == wcp; container 1 on it. User tests it themselves. NOT device-proven yet.
+- **Not here:** FEX-D2 Blizzard patches (follow-up, FEXCore component). User removed 11.0-2-arm64ec-15 from the device (container 2 still names it).
+- **Next (user picked):** Valve bleeding-edge 674d3cdd merge (xinput rescan, winebus report length, critical-section, Radeon version), GE cmd CHOICE timeout, GE B8G8R8A8_UNORM-first (hand port), upstream winewayland dummy-buffer leak + clipboard class name. User: check the controller changes work with Bannerlator's input system.
+
 ## 2026-10-30 — v16 RELEASED — five layers (`build-bionic-layers-20261030-v16`, Latest + catalog default)
 - **Why:** DOOM (2016) (GOG) crashed at start on v15: `Galaxy64.dll` → `sechost` → `rpcrt4` access violation (writing 0x10); the EA app's `EABackgroundService` + MSI 0x8007065b failed the same way. Cause: Valve's "HACK: Avoid delay importing rpcrt4" (be454c4d1d60, Billy Laws) was reverted upstream (8fb9c7f7154b, Jacek Caban, Valve now patches LLVM, CW #27308); our llvm-mingw lacks that LLVM patch → delay-loaded variadic `NdrClientCall` loses its stack arguments on arm64ec. Proton 10 delay-loaded rpcrt4 without the hack.
 - **Fix:** re-apply the hack (Proton 11 layers) / same Makefile change (Proton 10): `rpcrt4` from DELAYIMPORTS to IMPORTS in sechost + advapi32; MARKERS check in build-step-arm64ec.sh (fatal on miss); versionCode 16. Branches `staging/<parent>/rpcrt4-exit-thunks` fast-forwarded on the user's go (backups `refs/backup/20261030/<parent>-before-rpcrt4-exit-thunks`): proton_11.11.1-DroidDeck 068807e2 · proton_11.0-2 2c0670d0 · proton_11.9-GE a01a7c58 · proton_10.0 cc815410 · proton_10.34-GE b76055cc. proton_11.0 (11.0-1) not affected, stays v15.
