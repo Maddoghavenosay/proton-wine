@@ -291,13 +291,13 @@ jobs:
             DESC="Proton 11.0-2 ${ARCH_NAME} (bionic) — stock Valve + fast-yield gate + FEX-unixlib loader + DirectAudio v1.3.2 (opt-in: registry Audio=directaudio; pulse/alsa stay default) + Android fixes (noexec/force_anon SD-card boot, drive-root copy guard, C.UTF-8 locale). Wayland + HDR10 added. v10: Media Foundation cutscene fixes (WMV/WMA). v11: shared-texture description driver, so DXVK before 3.0 shares D3D9/D3D11 textures again (NGS cutscenes on any DXVK)."
           fi
           
-          DESC="$DESC v15: GameNative fixes (virtual-desktop mode list, image map pool, high fixed allocations, GetNativeSystemInfo AMD64, crypt32 EKU, Vulkan OPWR off, WGL no_error, emulator cpu-area release, HideWineExports) + WinRT classes registered in both prefix views."
+          DESC="$DESC v15: GameNative fixes (virtual-desktop mode list, image map pool, high fixed allocations, GetNativeSystemInfo AMD64, crypt32 EKU, Vulkan OPWR off, WGL no_error, emulator cpu-area release, HideWineExports) + WinRT classes registered in both prefix views. v16: service-manager crash fix (sechost/advapi32 import rpcrt4 directly; GOG Galaxy games, EA app)."
           # Generate Proton profile.json
           cat > $GITHUB_WORKSPACE/profile.json << EOF
           {
             "type": "Proton",
             "versionName": "11.0-2-${ARCH_NAME}",
-            "versionCode": 15,
+            "versionCode": 16,
             "description": "${DESC}",
             "files": [],
             "wine": {
@@ -313,7 +313,7 @@ jobs:
           {
             "type": "Wine",
             "versionName": "11.0-2-${ARCH_NAME}",
-            "versionCode": 15,
+            "versionCode": 16,
             "description": "${DESC}",
             "files": [],
             "wine": {
